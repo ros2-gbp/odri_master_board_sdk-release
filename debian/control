@@ -1,0 +1,12 @@
+Source: ros-rolling-odri-master-board-sdk
+Section: misc
+Priority: optional
+Maintainer: Maximilien Naveau <mnaveau@tue.mpg.de>
+Build-Depends: debhelper (>= 9.0.0), cmake, git, libboost-python-dev, python3-dev, python3-numpy, ros-rolling-ros-workspace
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-rolling-odri-master-board-sdk
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, git, libboost-python-dev, python3-dev, python3-numpy, ros-rolling-ros-workspace
+Description: This project contains the sdk for the communication between a computer and the master-board
