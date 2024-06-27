@@ -87,7 +87,7 @@ set(${PROJECT_NAME}_HEADERS
 
 add_library(${ODRI_LIBRARY_NAME} SHARED ${${PROJECT_NAME}_SOURCES}
                                         ${${PROJECT_NAME}_HEADERS})
-target_link_libraries(${ODRI_LIBRARY_NAME} pthread)
+target_link_libraries(${ODRI_LIBRARY_NAME} PUBLIC pthread)
 target_include_directories(
   ${ODRI_LIBRARY_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
