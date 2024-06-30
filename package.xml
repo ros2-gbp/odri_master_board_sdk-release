@@ -8,8 +8,6 @@
         and the master-board
     </description>
     <maintainer email="mnaveau@tue.mpg.de">Maximilien Naveau</maintainer>
-    <maintainer email="ostasse@laas.fr">Olivier Stasse</maintainer>
-    <maintainer email="gsaurel@laas.fr">Guilhem Saurel</maintainer>
     <license>BSD 3-Clause</license>
 
     <buildtool_depend>cmake</buildtool_depend>
@@ -21,7 +19,7 @@
     <depend condition="$ROS_PYTHON_VERSION == 3">libboost-python-dev</depend>
 
     <test_depend>catch2</test_depend>
-    
+
     <depend>git</depend>
     <export>
       <build_type>cmake</build_type>
