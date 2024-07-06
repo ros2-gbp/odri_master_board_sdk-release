@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019 CNRS
+# Copyright (c) 2019 CNRS Copyright (c) 2024 CNRS INRIA
 #
 
 cmake_minimum_required(VERSION 3.14)
@@ -19,13 +19,6 @@ set(PROJECT_DESCRIPTION
 set(PROJECT_URL https://github.com/open-dynamic-robot-initiative/master-board)
 set(PROJECT_USE_CMAKE_EXPORT TRUE)
 set(PROJECT_VERSION_COMPUTATION_METHODS ROS_PACKAGE_XML_FILE)
-
-# --- OPTIONS ----------------------------------------
-if(APPLE)
-  set(BUILD_PYTHON_INTERFACE
-      OFF
-      CACHE BOOL "Build the python binding")
-endif()
 
 option(BUILD_PYTHON_INTERFACE "Build the python binding" ON)
 option(PYTHON_STANDARD_LAYOUT "Enable standard Python package layout" ON)
@@ -47,9 +40,11 @@ include("${JRL_CMAKE_MODULES}/base.cmake")
 include("${JRL_CMAKE_MODULES}/boost.cmake")
 include("${JRL_CMAKE_MODULES}/python.cmake")
 include("${JRL_CMAKE_MODULES}/ide.cmake")
+include("${JRL_CMAKE_MODULES}/apple.cmake")
 
 compute_project_args(PROJECT_ARGS LANGUAGES CXX)
 project(${PROJECT_NAME} ${PROJECT_ARGS})
+apply_default_apple_configuration()
 check_minimal_cxx_standard(11 ENFORCE)
 
 # ----------------------------------------------------
@@ -58,8 +53,9 @@ check_minimal_cxx_standard(11 ENFORCE)
 
 # Set component to fetch from boost Get the python interface for the bindings
 if(BUILD_PYTHON_INTERFACE)
+  set(PYTHON_COMPONENTS Interpreter Development.Module)
   findpython(REQUIRED)
-  search_for_boost_python(REQUIRED)
+  set_boost_default_options()
 endif(BUILD_PYTHON_INTERFACE)
 
 # ----------------------------------------------------
@@ -114,11 +110,16 @@ if(BUILD_PYTHON_INTERFACE)
   set(${PYWRAP}_INSTALL_DIR ${PYTHON_SITELIB})
   add_library(${PYWRAP} SHARED ${${PYWRAP}_SOURCES} ${${PYWRAP}_HEADERS})
   target_include_directories(${PYWRAP} SYSTEM PRIVATE ${PYTHON_INCLUDE_DIR})
-  target_link_libraries(${PYWRAP} ${ODRI_LIBRARY_NAME})
-  target_link_boost_python(${PYWRAP})
-  get_relative_rpath(${${PYWRAP}_INSTALL_DIR} ${PYWRAP}_INSTALL_RPATH)
-  set_target_properties(${PYWRAP} PROPERTIES INSTALL_RPATH
-                                             "${${PYWRAP}_INSTALL_RPATH}")
+
+  set_target_properties(${PYWRAP} PROPERTIES SUFFIX ${PYTHON_EXT_SUFFIX})
+  target_link_libraries(${PYWRAP} PUBLIC ${ODRI_LIBRARY_NAME})
+  target_link_boost_python(${PYWRAP} PUBLIC)
+  if(UNIX)
+    get_relative_rpath(${${PYWRAP}_INSTALL_DIR} ${PYWRAP}_INSTALL_RPATH)
+    set_target_properties(${PYWRAP} PROPERTIES INSTALL_RPATH
+                                               "${${PYWRAP}_INSTALL_RPATH}")
+  endif()
+
   install(TARGETS ${PYWRAP} DESTINATION ${${PYWRAP}_INSTALL_DIR})
 
   # --- Allow to do: make python --- #
@@ -134,13 +135,13 @@ endif(BUILD_PYTHON_INTERFACE)
 
 # --- CHECK EXAMPLES -----------------------------------------------------------
 add_executable(master_board_example example/example.cpp)
-target_link_libraries(master_board_example ${ODRI_LIBRARY_NAME})
+target_link_libraries(master_board_example PRIVATE ${ODRI_LIBRARY_NAME})
 set_target_properties(master_board_example
                       PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS master_board_example DESTINATION bin)
 
 add_executable(master_board_example_pd example/example_pd.cpp)
-target_link_libraries(master_board_example_pd ${ODRI_LIBRARY_NAME})
+target_link_libraries(master_board_example_pd PRIVATE ${ODRI_LIBRARY_NAME})
 set_target_properties(master_board_example_pd
                       PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS master_board_example_pd DESTINATION bin)
@@ -148,24 +149,16 @@ install(TARGETS master_board_example_pd DESTINATION bin)
 add_executable(master_board_example_imu_data_collection
                example/example_imu_data_collection.cpp)
 target_link_libraries(master_board_example_imu_data_collection
-                      ${ODRI_LIBRARY_NAME})
+                      PRIVATE ${ODRI_LIBRARY_NAME})
 install(TARGETS master_board_example_imu_data_collection DESTINATION bin)
 
 # --- UNIT TESTS -----------------------------------------------------------
 if(BUILD_TESTING)
-  find_package(Catch2 3.1 QUIET)
-  if(NOT Catch2_FOUND)
-    include(FetchContent)
-    FetchContent_Declare(
-      Catch2
-      GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-      GIT_TAG v3.4.0)
-    FetchContent_MakeAvailable(Catch2)
-  endif()
+  find_package(Catch2)
+  add_definitions(-DFOUND_CATCH2_MAJOR_VERSION=${Catch2_VERSION_MAJOR})
   add_unit_test(test_protocol tests/test_protocol.cpp)
   target_link_libraries(test_protocol PRIVATE Catch2::Catch2WithMain)
 endif()
-
 # Allows Colcon to find non-Ament packages when using workspace underlays
 file(
   WRITE
