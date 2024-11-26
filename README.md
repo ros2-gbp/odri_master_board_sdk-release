@@ -1,3 +1,26 @@
+## odri_master_board (rolling) - 1.0.7-2
+
+The packages in the `odri_master_board` repository were released into the `rolling` distro by running `/usr/bin/bloom-release --track rolling --rosdistro rolling odri_master_board` on `Tue, 26 Nov 2024 14:28:51 -0000`
+
+The `odri_master_board_sdk` package was released.
+
+Version of package(s) in repository `odri_master_board`:
+
+- upstream repository: https://github.com/stack-of-tasks/odri_master_board_sdk_release.git
+- release repository: https://github.com/ros2-gbp/odri_master_board_sdk-release.git
+- rosdistro version: `1.0.7-1`
+- old version: `1.0.7-1`
+- new version: `1.0.7-2`
+
+Versions of tools used:
+
+- bloom version: `0.12.0`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.25.1`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## odri_master_board (jazzy) - 1.0.7-1
 
 The packages in the `odri_master_board` repository were released into the `jazzy` distro by running `/usr/bin/bloom-release --ros-distro jazzy odri_master_board` on `Sat, 06 Jul 2024 21:13:28 -0000`
