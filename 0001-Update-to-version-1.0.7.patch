@@ -1,0 +1,1586 @@
+From d0edb1bf6d385ff350ad8a4912136a8298eaaa4b Mon Sep 17 00:00:00 2001
+From: Olivier Stasse <olivier.stasse@laas.fr>
+Date: Thu, 27 Jun 2024 22:25:01 +0200
+Subject: [PATCH 1/4] Update to version 1.0.7 cmake synchro Fix compilation pb
+ with stdexcept Fix binding pb with python Remove Catch2 fetching from test
+ directory.
+
+---
+ CMakeLists.txt                 |  52 +++++-----
+ cmake/Config.cmake.in          |   6 +-
+ cmake/cmake_reinstall.cmake.in |   4 +-
+ cmake/cmake_uninstall.cmake.in |  14 +--
+ cmake/compiler.cmake           | 167 +++++++++++++++++++++++++--------
+ cmake/config.hh.cmake          |  30 +++++-
+ cmake/cxx-standard.cmake       |   9 ++
+ cmake/doxygen.cmake            |  26 ++++-
+ cmake/git-archive-all.sh       |  23 +++--
+ cmake/header.cmake             |  73 +++++++++++---
+ cmake/ide.cmake                |   4 +-
+ cmake/package-config.cmake     |   7 +-
+ cmake/pkg-config.cmake         |   1 -
+ cmake/python.cmake             | 128 ++++++++++++++++---------
+ cmake/release.cmake            | 112 ++++++++++++++--------
+ cmake/stubs.cmake              |  36 +++++--
+ cmake/test.cmake               | 122 +++++++++++++++++++-----
+ cmake/uninstall.cmake          |  30 +++++-
+ cmake/version.cmake            |   6 +-
+ srcpy/my_bindings_headr.cpp    |  42 ++++-----
+ tests/test_protocol.cpp        |  10 ++
+ 21 files changed, 660 insertions(+), 242 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index fc47013..1cc2b75 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ #
+-# Copyright (c) 2019 CNRS
++# Copyright (c) 2019 CNRS Copyright (c) 2024 CNRS INRIA
+ #
+ 
+ cmake_minimum_required(VERSION 3.14)
+@@ -20,13 +20,6 @@ set(PROJECT_URL https://github.com/open-dynamic-robot-initiative/master-board)
+ set(PROJECT_USE_CMAKE_EXPORT TRUE)
+ set(PROJECT_VERSION_COMPUTATION_METHODS ROS_PACKAGE_XML_FILE)
+ 
+-# --- OPTIONS ----------------------------------------
+-if(APPLE)
+-  set(BUILD_PYTHON_INTERFACE
+-      OFF
+-      CACHE BOOL "Build the python binding")
+-endif()
+-
+ option(BUILD_PYTHON_INTERFACE "Build the python binding" ON)
+ option(PYTHON_STANDARD_LAYOUT "Enable standard Python package layout" ON)
+ option(PYTHON_DEB_LAYOUT "Enable Debian-style Python package layout" OFF)
+@@ -47,9 +40,11 @@ include("${JRL_CMAKE_MODULES}/base.cmake")
+ include("${JRL_CMAKE_MODULES}/boost.cmake")
+ include("${JRL_CMAKE_MODULES}/python.cmake")
+ include("${JRL_CMAKE_MODULES}/ide.cmake")
++include("${JRL_CMAKE_MODULES}/apple.cmake")
+ 
+ compute_project_args(PROJECT_ARGS LANGUAGES CXX)
+ project(${PROJECT_NAME} ${PROJECT_ARGS})
++apply_default_apple_configuration()
+ check_minimal_cxx_standard(11 ENFORCE)
+ 
+ # ----------------------------------------------------
+@@ -58,8 +53,9 @@ check_minimal_cxx_standard(11 ENFORCE)
+ 
+ # Set component to fetch from boost Get the python interface for the bindings
+ if(BUILD_PYTHON_INTERFACE)
++  set(PYTHON_COMPONENTS Interpreter Development.Module)
+   findpython(REQUIRED)
+-  search_for_boost_python(REQUIRED)
++  set_boost_default_options()
+ endif(BUILD_PYTHON_INTERFACE)
+ 
+ # ----------------------------------------------------
+@@ -91,7 +87,7 @@ set(${PROJECT_NAME}_HEADERS
+ 
+ add_library(${ODRI_LIBRARY_NAME} SHARED ${${PROJECT_NAME}_SOURCES}
+                                         ${${PROJECT_NAME}_HEADERS})
+-target_link_libraries(${ODRI_LIBRARY_NAME} pthread)
++target_link_libraries(${ODRI_LIBRARY_NAME} PUBLIC pthread)
+ target_include_directories(
+   ${ODRI_LIBRARY_NAME}
+   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+@@ -114,11 +110,16 @@ if(BUILD_PYTHON_INTERFACE)
+   set(${PYWRAP}_INSTALL_DIR ${PYTHON_SITELIB})
+   add_library(${PYWRAP} SHARED ${${PYWRAP}_SOURCES} ${${PYWRAP}_HEADERS})
+   target_include_directories(${PYWRAP} SYSTEM PRIVATE ${PYTHON_INCLUDE_DIR})
+-  target_link_libraries(${PYWRAP} ${ODRI_LIBRARY_NAME})
+-  target_link_boost_python(${PYWRAP})
+-  get_relative_rpath(${${PYWRAP}_INSTALL_DIR} ${PYWRAP}_INSTALL_RPATH)
+-  set_target_properties(${PYWRAP} PROPERTIES INSTALL_RPATH
+-                                             "${${PYWRAP}_INSTALL_RPATH}")
++
++  set_target_properties(${PYWRAP} PROPERTIES SUFFIX ${PYTHON_EXT_SUFFIX})
++  target_link_libraries(${PYWRAP} PUBLIC ${ODRI_LIBRARY_NAME})
++  target_link_boost_python(${PYWRAP} PUBLIC)
++  if(UNIX)
++    get_relative_rpath(${${PYWRAP}_INSTALL_DIR} ${PYWRAP}_INSTALL_RPATH)
++    set_target_properties(${PYWRAP} PROPERTIES INSTALL_RPATH
++                                               "${${PYWRAP}_INSTALL_RPATH}")
++  endif()
++
+   install(TARGETS ${PYWRAP} DESTINATION ${${PYWRAP}_INSTALL_DIR})
+ 
+   # --- Allow to do: make python --- #
+@@ -134,13 +135,15 @@ endif(BUILD_PYTHON_INTERFACE)
+ 
+ # --- CHECK EXAMPLES -----------------------------------------------------------
+ add_executable(master_board_example example/example.cpp)
+-target_link_libraries(master_board_example ${ODRI_LIBRARY_NAME})
++target_link_libraries(master_board_example PRIVATE ${ODRI_LIBRARY_NAME})
++
+ set_target_properties(master_board_example
+                       PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+ install(TARGETS master_board_example DESTINATION bin)
+ 
+ add_executable(master_board_example_pd example/example_pd.cpp)
+-target_link_libraries(master_board_example_pd ${ODRI_LIBRARY_NAME})
++target_link_libraries(master_board_example_pd PRIVATE ${ODRI_LIBRARY_NAME})
++
+ set_target_properties(master_board_example_pd
+                       PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+ install(TARGETS master_board_example_pd DESTINATION bin)
+@@ -148,24 +151,17 @@ install(TARGETS master_board_example_pd DESTINATION bin)
+ add_executable(master_board_example_imu_data_collection
+                example/example_imu_data_collection.cpp)
+ target_link_libraries(master_board_example_imu_data_collection
+-                      ${ODRI_LIBRARY_NAME})
++                      PRIVATE ${ODRI_LIBRARY_NAME})
++
+ install(TARGETS master_board_example_imu_data_collection DESTINATION bin)
+ 
+ # --- UNIT TESTS -----------------------------------------------------------
+ if(BUILD_TESTING)
+-  find_package(Catch2 3.1 QUIET)
+-  if(NOT Catch2_FOUND)
+-    include(FetchContent)
+-    FetchContent_Declare(
+-      Catch2
+-      GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+-      GIT_TAG v3.4.0)
+-    FetchContent_MakeAvailable(Catch2)
+-  endif()
++  find_package(Catch2)
++  add_definitions(-DFOUND_CATCH2_MAJOR_VERSION=${Catch2_VERSION_MAJOR})
+   add_unit_test(test_protocol tests/test_protocol.cpp)
+   target_link_libraries(test_protocol PRIVATE Catch2::Catch2WithMain)
+ endif()
+-
+ # Allows Colcon to find non-Ament packages when using workspace underlays
+ file(
+   WRITE
+diff --git a/cmake/Config.cmake.in b/cmake/Config.cmake.in
+index 6f840d2..274c9fc 100644
+--- a/cmake/Config.cmake.in
++++ b/cmake/Config.cmake.in
+@@ -142,7 +142,11 @@ foreach(component ${@PROJECT_NAME@_FIND_COMPONENTS})
+   if(@PROJECT_NAME@_${component}_FOUND)
+     message(STATUS "@PROJECT_NAME@: ${component} found.")
+   else()
+-    message(STATUS "@PROJECT_NAME@: ${component} not found.")
++    if(@PROJECT_NAME@_FIND_REQUIRED_${component})
++      message(FATAL_ERROR "@PROJECT_NAME@: ${component} not found.")
++    else()
++      message(STATUS "@PROJECT_NAME@: ${component} not found.")
++    endif()
+   endif()
+ endforeach()
+ check_required_components("@PROJECT_NAME@")
+diff --git a/cmake/cmake_reinstall.cmake.in b/cmake/cmake_reinstall.cmake.in
+index 3b98bef..3ebdedb 100644
+--- a/cmake/cmake_reinstall.cmake.in
++++ b/cmake/cmake_reinstall.cmake.in
+@@ -13,6 +13,6 @@
+ # You should have received a copy of the GNU General Public License
+ # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ if(EXISTS "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+-  execute_process(COMMAND "@CMAKE_COMMAND@" --build "@PROJECT_BINARY_DIR@" --target uninstall --config $<CONFIGURATION>)
++  execute_process(COMMAND ${CMAKE_COMMAND} --build "@PROJECT_BINARY_DIR@" --target uninstall --config $<CONFIGURATION>)
+ endif()
+-execute_process(COMMAND "@CMAKE_COMMAND@" --build "@PROJECT_BINARY_DIR@" --target install --config $<CONFIGURATION>)
++execute_process(COMMAND ${CMAKE_COMMAND} --build "@PROJECT_BINARY_DIR@" --target install --config $<CONFIGURATION>)
+diff --git a/cmake/cmake_uninstall.cmake.in b/cmake/cmake_uninstall.cmake.in
+index 1dd0999..48f6be2 100644
+--- a/cmake/cmake_uninstall.cmake.in
++++ b/cmake/cmake_uninstall.cmake.in
+@@ -19,15 +19,15 @@ IF(NOT EXISTS "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+ ENDIF(NOT EXISTS "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+ 
+ MESSAGE(STATUS "catkin path: @CMAKE_INSTALL_PREFIX@/.catkin")
+-IF(EXISTS "@CMAKE_INSTALL_PREFIX@/.catkin")
++IF(EXISTS "@CMAKE_INSTALL_PREFIX@/.catkin" AND PACKAGE_CREATES_DOT_CATKIN)
+   MESSAGE(STATUS "Try to remove @CMAKE_INSTALL_PREFIX@/.catkin")
+   EXECUTE_PROCESS(
+-      COMMAND @CMAKE_COMMAND@ -E remove "@CMAKE_INSTALL_PREFIX@/.catkin"
++      COMMAND ${CMAKE_COMMAND} -E remove "@CMAKE_INSTALL_PREFIX@/.catkin"
+       RESULT_VARIABLE rm_resval
+       OUTPUT_VARIABLE rm_out
+       ERROR_VARIABLE rm_err
+        )
+-ENDIF(EXISTS "@CMAKE_INSTALL_PREFIX@/.catkin")
++ENDIF()
+ 
+ IF(EXISTS "@CMAKE_CURRRENT_BINARY_DIR@/install_manifest.txt")
+   return()
+@@ -40,7 +40,7 @@ FOREACH(file ${files})
+   MESSAGE(STATUS "Uninstalling \"$ENV{DESTDIR}${file}\"")
+   IF(EXISTS "$ENV{DESTDIR}${file}")
+     EXECUTE_PROCESS(
+-      COMMAND @CMAKE_COMMAND@ -E remove "$ENV{DESTDIR}${file}"
++      COMMAND ${CMAKE_COMMAND} -E remove "$ENV{DESTDIR}${file}"
+       RESULT_VARIABLE rm_resval
+       OUTPUT_VARIABLE rm_out
+       )
+@@ -54,7 +54,7 @@ FOREACH(file ${files})
+       IF(EXISTS "$ENV{DESTDIR}${pycfile}")
+         MESSAGE(STATUS "Uninstalling \"$ENV{DESTDIR}${pycfile}\"")
+         EXECUTE_PROCESS(
+-          COMMAND @CMAKE_COMMAND@ -E remove "$ENV{DESTDIR}${pycfile}"
++          COMMAND ${CMAKE_COMMAND} -E remove "$ENV{DESTDIR}${pycfile}"
+           RESULT_VARIABLE rm_resval
+           OUTPUT_VARIABLE rm_out
+           )
+@@ -70,7 +70,7 @@ FOREACH(file ${files})
+     # If file is a broken symbolic link, EXISTS returns false.
+     # Workaround this bug by attempting to remove the file anyway.
+     EXECUTE_PROCESS(
+-      COMMAND @CMAKE_COMMAND@ -E remove "$ENV{DESTDIR}${file}"
++      COMMAND ${CMAKE_COMMAND} -E remove "$ENV{DESTDIR}${file}"
+       RESULT_VARIABLE rm_resval
+       OUTPUT_VARIABLE rm_out
+       ERROR_QUIET
+@@ -78,7 +78,7 @@ FOREACH(file ${files})
+   ENDIF(EXISTS "$ENV{DESTDIR}${file}")
+ ENDFOREACH(file)
+ EXECUTE_PROCESS(
+-  COMMAND "@CMAKE_COMMAND@" -E remove "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt"
++  COMMAND ${CMAKE_COMMAND} -E remove "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt"
+   RESULT_VARIABLE rm_resval
+   OUTPUT_VARIABLE rm_out
+   ERROR_QUIET
+diff --git a/cmake/compiler.cmake b/cmake/compiler.cmake
+index fcd428e..48c349f 100644
+--- a/cmake/compiler.cmake
++++ b/cmake/compiler.cmake
+@@ -19,51 +19,140 @@ macro(_SETUP_PROJECT_WARNINGS)
+   # -Wmissing-declarations is disabled for now as older GCC version does not
+   # support it but CMake doest not check for the flag acceptance correctly.
+ 
+-  if(UNIX)
+-    set(FLAGS
+-        -pedantic
+-        -Wno-long-long
+-        -Wall
+-        -Wextra
+-        -Wcast-align
+-        -Wcast-qual
+-        -Wformat
+-        -Wwrite-strings
+-        -Wconversion)
+-    foreach(FLAG ${FLAGS})
+-      check_cxx_compiler_flag(${FLAG} R${FLAG})
+-      if(${R${FLAG}})
+-        set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} ${FLAG}")
+-      endif(${R${FLAG}})
+-    endforeach(FLAG ${FLAGS})
+-
+-    if(NOT DEFINED CXX_DISABLE_WERROR)
+-      set(WARNING_CXX_FLAGS "-Werror ${WARNING_CXX_FLAGS}")
+-    endif(NOT DEFINED CXX_DISABLE_WERROR)
+-  endif(UNIX)
++  set(GNU_FLAGS
++      -pedantic
++      -Wno-long-long
++      -Wall
++      -Wextra
++      -Wcast-align
++      -Wcast-qual
++      -Wformat
++      -Wwrite-strings
++      -Wconversion)
++  if(NOT DEFINED CXX_DISABLE_WERROR)
++    list(APPEND GNU_FLAGS -Werror)
++  endif(NOT DEFINED CXX_DISABLE_WERROR)
+ 
+   # For win32 systems, it is impossible to use Wall, especially with boost,
+   # which is way too verbose The default levels (W3/W4) are enough The next
+   # macro remove warnings on deprecations due to stl.
+-  if(MSVC)
+-    set(WARNING_CXX_FLAGS "-D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS")
+-    set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} -D_CRT_SECURE_NO_DEPRECATE")
+-    # -- The following warnings are removed to highlight the output C4101 The
+-    # local variable is never used removed since happens frequently in headers.
+-    set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} /wd4101")
+-    # C4250 'class1' : inherits 'class2::member' via dominance
+-    set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} /wd4250")
+-    # C4251 class 'type' needs to have dll-interface to be used by clients of
+-    # class 'type2' ~ in practice, raised by the classes that have non-dll
+-    # attribute (such as std::vector)
+-    set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} /wd4251")
+-    # C4275 non - DLL-interface used as base for DLL-interface
+-    set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} /wd4275")
+-    # C4355 "this" used in base member initializer list
+-    set(WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS} /wd4355")
+-  endif()
++  set(MSVC_FLAGS
++      -D_SCL_SECURE_NO_WARNINGS
++      -D_CRT_SECURE_NO_WARNINGS
++      -D_CRT_SECURE_NO_DEPRECATE
++      # -- The following warnings are removed to highlight the output C4101 The
++      # local variable is never used removed since happens frequently in
++      # headers.
++      /wd4101
++      # C4250 'class1' : inherits 'class2::member' via dominance
++      /wd4250
++      # C4251 class 'type' needs to have dll-interface to be used by clients of
++      # class 'type2' ~ in practice, raised by the classes that have non-dll
++      # attribute (such as std::vector)
++      /wd4251
++      # C4275 non - DLL-interface used as base for DLL-interface
++      /wd4275
++      # C4355 "this" used in base member initializer list
++      /wd4355)
++
++  cxx_flags_by_compiler_frontend(
++    GNU
++    ${GNU_FLAGS}
++    MSVC
++    ${MSVC_FLAGS}
++    OUTPUT
++    WARNING_CXX_FLAGS_LIST
++    FILTER)
++  string(REPLACE ";" " " WARNING_CXX_FLAGS "${WARNING_CXX_FLAGS_LIST}")
+ 
+   set(CMAKE_CXX_FLAGS "${WARNING_CXX_FLAGS} ${CMAKE_CXX_FLAGS}")
+ 
+   list(APPEND LOGGING_WATCHED_VARIABLES WARNING_CXX_FLAGS)
+ endmacro(_SETUP_PROJECT_WARNINGS)
++
++#[=======================================================================[.rst:
++.. command:: CXX_FLAGS_BY_COMPILER_FRONTEND(<GCC   [<flags1>...]>
++                                            <MSVC  [<flags1>...]>
++                                            OUTPUT flags
++                                            <FILTER>)
++
++Detect the compiler frontend (the command line interface) and output the
++corresponding ``CXX_FLAGS``.
++
++The following arguments allow to specify ``CXX_FLAGS`` for a compiler
++frontend:
++
++:param GNU: List of flags for GNU compiler frontend (Gcc, G++)
++:param MSVC: List of flags for MSVC compiler frontend (MSVC, ClangCl)
++
++Detected compiler frontend flags are then outputed in the ``OUTPUT``
++parameter.
++
++Optional ``FILTER`` parameter filter outputed flags with check_cxx_compiler_flag.
++
++.. warning:: When ``FILTER`` option is activated, definition should by passed with
++-D prefix to be valid compiler parameter.
++
++Example
++^^^^^^^
++
++.. code-block:: cmake
++  CXX_FLAGS_BY_COMPILER_FRONTEND(
++    GNU -Wno-conversion -Wno-comment -Wno-self-assign-overloaded
++    MSVC  "/bigobj"
++    OUTPUT COMPLIE_OPTIONS
++    FILTER)
++#]=======================================================================]
++
++function(CXX_FLAGS_BY_COMPILER_FRONTEND)
++  set(options FILTER)
++  set(oneValueArgs OUTPUT)
++  set(multiValueArgs GNU MSVC)
++  cmake_parse_arguments(ARGS "${options}" "${oneValueArgs}" "${multiValueArgs}"
++                        ${ARGN})
++
++  # Before CMake 3.14, the CMAKE_CXX_COMPILER_FRONTEND_VARIANT doesn't exists.
++  # Before CMake 3.26, when CMAKE_CXX_COMPILER_ID is set to GNU, MSVC or
++  # AppleClang, CMAKE_CXX_COMPILER_FRONTEND_VARIANT doesn't exists either
++  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT)
++    if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU")
++      set(FLAGS ${ARGS_GNU})
++    elseif(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
++      set(FLAGS ${ARGS_MSVC})
++    else()
++      message(
++        WARNING "Unknown compiler frontend for '${CMAKE_CXX_COMPILER_ID}' "
++                "with frontend '${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}'\n"
++                "No flags outputed")
++    endif()
++  else()
++    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_SIMULATE_ID MATCHES
++                                                 "MSVC")
++      set(FLAGS ${ARGS_MSVC})
++    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
++      set(FLAGS ${ARGS_MSVC})
++    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
++      set(FLAGS ${ARGS_GNU})
++    else()
++      message(
++        WARNING "Unknown compiler frontend for '${CMAKE_CXX_COMPILER_ID}' "
++                "with simulated ID '${CMAKE_CXX_SIMULATED_ID}'\n"
++                "No flags outputed")
++    endif()
++  endif()
++
++  if(ARGS_FILTER)
++    foreach(FLAG ${FLAGS})
++      check_cxx_compiler_flag(${FLAG} res_${FLAG})
++      if(${res_${FLAG}})
++        list(APPEND FILTERED_FLAGS ${FLAG})
++      endif()
++    endforeach()
++  else()
++    set(FILTERED_FLAGS ${FLAGS})
++  endif()
++
++  set(${ARGS_OUTPUT}
++      ${FILTERED_FLAGS}
++      PARENT_SCOPE)
++endfunction()
+diff --git a/cmake/config.hh.cmake b/cmake/config.hh.cmake
+index 0af547f..d3b4a36 100644
+--- a/cmake/config.hh.cmake
++++ b/cmake/config.hh.cmake
+@@ -31,37 +31,63 @@
+ //
+ // On Linux, set the visibility accordingly. If C++ symbol visibility
+ // is handled by the compiler, see: http://gcc.gnu.org/wiki/Visibility
++//
++// Explicit template instantiation on Windows need to add
++// dllexport on the definition and dllimport on the declaration.
++// The XXX_EXPLICIT_INSTANTIATION_DECLARATION_DLLAPI macro
++// should be set on the declaration while
++// the XXX_EXPLICIT_INSTANTIATION_DEFINITION_DLLAPI macro
++// should be set on the definition.
+ # if defined _WIN32 || defined __CYGWIN__
+ // On Microsoft Windows, use dllimport and dllexport to tag symbols.
+ #  define @LIBRARY_NAME@_DLLIMPORT __declspec(dllimport)
+ #  define @LIBRARY_NAME@_DLLEXPORT __declspec(dllexport)
+ #  define @LIBRARY_NAME@_DLLLOCAL
++#  define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLIMPORT __declspec(dllimport)
++#  define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLEXPORT
++#  define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLIMPORT __declspec(dllimport)
++#  define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLEXPORT __declspec(dllexport)
+ # else
+ // On Linux, for GCC >= 4, tag symbols using GCC extension.
+ #  if __GNUC__ >= 4
+ #   define @LIBRARY_NAME@_DLLIMPORT __attribute__ ((visibility("default")))
+ #   define @LIBRARY_NAME@_DLLEXPORT __attribute__ ((visibility("default")))
+ #   define @LIBRARY_NAME@_DLLLOCAL  __attribute__ ((visibility("hidden")))
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLIMPORT __attribute__ ((visibility("default")))
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLEXPORT __attribute__ ((visibility("default")))
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLIMPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLEXPORT
+ #  else
+ // Otherwise (GCC < 4 or another compiler is used), export everything.
+ #   define @LIBRARY_NAME@_DLLIMPORT
+ #   define @LIBRARY_NAME@_DLLEXPORT
+ #   define @LIBRARY_NAME@_DLLLOCAL
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLIMPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLEXPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLIMPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLEXPORT
+ #  endif // __GNUC__ >= 4
+ # endif // defined _WIN32 || defined __CYGWIN__
+ 
+ # ifdef @LIBRARY_NAME@_STATIC
+ // If one is using the library statically, get rid of
+-// extra information.
++// extra information and use standard explicit template
++// instantiation keyword.
+ #  define @LIBRARY_NAME@_DLLAPI
+ #  define @LIBRARY_NAME@_LOCAL
++#  define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION extern template
+ # else
+ // Depending on whether one is building or using the
+-// library define DLLAPI to import or export.
++// library define DLLAPI to import or export and
++// define the right explicit template instantiation keyword.
+ #  ifdef @EXPORT_SYMBOL@
+ #   define @LIBRARY_NAME@_DLLAPI @LIBRARY_NAME@_DLLEXPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLAPI @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLEXPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLAPI @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLEXPORT
+ #  else
+ #   define @LIBRARY_NAME@_DLLAPI @LIBRARY_NAME@_DLLIMPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLAPI @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DECLARATION_DLLIMPORT
++#   define @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLAPI @LIBRARY_NAME@_EXPLICIT_INSTANTIATION_DEFINITION_DLLIMPORT
+ #  endif // @LIBRARY_NAME@_EXPORTS
+ #  define @LIBRARY_NAME@_LOCAL @LIBRARY_NAME@_DLLLOCAL
+ # endif // @LIBRARY_NAME@_STATIC
+diff --git a/cmake/cxx-standard.cmake b/cmake/cxx-standard.cmake
+index 6808507..ff3ebfd 100644
+--- a/cmake/cxx-standard.cmake
++++ b/cmake/cxx-standard.cmake
+@@ -147,6 +147,15 @@ macro(CHECK_MINIMAL_CXX_STANDARD STANDARD)
+         STATUS
+           "C++ standard sufficient: Minimal required ${_MINIMAL_CXX_STANDARD}, currently defined: ${_CURRENT_STANDARD}"
+       )
++      # current C++ standard was not set in CMake but we enforce it
++      if(NOT DEFINED CMAKE_CXX_STANDARD AND (ENFORCE_MINIMAL_CXX_STANDARD
++                                             OR MINIMAL_CXX_STANDARD_ENFORCE))
++        message(
++          STATUS
++            "CMAKE_CXX_STANDARD was not set: automatically set to currently defined standard ${_CURRENT_STANDARD}"
++        )
++        set(CMAKE_CXX_STANDARD ${_CURRENT_STANDARD})
++      endif()
+     endif() # requested minimum is higher than the currently selected
+   endif()
+ endmacro()
+diff --git a/cmake/doxygen.cmake b/cmake/doxygen.cmake
+index caaccd0..7c7e1cf 100644
+--- a/cmake/doxygen.cmake
++++ b/cmake/doxygen.cmake
+@@ -614,6 +614,21 @@ macro(_SETUP_PROJECT_DOCUMENTATION)
+   endif(NOT DOXYGEN_FOUND)
+ endmacro(_SETUP_PROJECT_DOCUMENTATION)
+ 
++# REMOVE_DUPLICATES
++# -----------------
++#
++# Remove duplicate values from a space separated list
++function(REMOVE_DUPLICATES ARG_STR OUTPUT)
++  set(ARG_LIST ${ARG_STR})
++  separate_arguments(ARG_LIST)
++  list(REMOVE_DUPLICATES ARG_LIST)
++  string(REGEX REPLACE "([^\\]|^);" "\\1 " _TMP_STR "${ARG_LIST}")
++  string(REGEX REPLACE "[\\](.)" "\\1" _TMP_STR "${_TMP_STR}") # fixes escaping
++  set(${OUTPUT}
++      "${_TMP_STR}"
++      PARENT_SCOPE)
++endfunction()
++
+ # _DOXYTAG_ENTRIES_FROM_CMAKE_DEPENDENCIES
+ # ----------------------------------------
+ #
+@@ -687,14 +702,17 @@ macro(_SETUP_PROJECT_DOCUMENTATION_FINALIZE)
+           file(RELATIVE_PATH DEP_DOCDIR ${INSTALL_DOCDIR}
+                ${${PREFIX}_DOXYGENDOCDIR})
+ 
+-          set(DOXYGEN_TAGFILES_FROM_DEPENDENCIES
+-              "${DOXYGEN_TAGFILES_FROM_DEPENDENCIES} \"${${PREFIX}_DOXYGENDOCDIR}/${LIBRARY_NAME}.doxytag\"=\"${DEP_DOCDIR}\""
++          set(_TAGFILES_FROM_DEPENDENCIES
++              "${_TAGFILES_FROM_DEPENDENCIES} \"${${PREFIX}_DOXYGENDOCDIR}/${LIBRARY_NAME}.doxytag = ${DEP_DOCDIR}\""
+           )
+         endif()
+       endforeach()
+       _doxytag_entries_from_cmake_dependencies(
+-        "${_PACKAGE_CONFIG_DEPENDENCIES_PROJECTS}"
+-        DOXYGEN_TAGFILES_FROM_DEPENDENCIES)
++        "${_PACKAGE_CONFIG_DEPENDENCIES_PROJECTS}" _TAGFILES_FROM_DEPENDENCIES)
++      if(_TAGFILES_FROM_DEPENDENCIES)
++        remove_duplicates(${_TAGFILES_FROM_DEPENDENCIES}
++                          DOXYGEN_TAGFILES_FROM_DEPENDENCIES)
++      endif()
+     endif()
+     _set_if_undefined(DOXYGEN_TAGFILES "${DOXYGEN_TAGFILES_FROM_DEPENDENCIES}")
+ 
+diff --git a/cmake/git-archive-all.sh b/cmake/git-archive-all.sh
+index 5d50033..06d3f7a 100755
+--- a/cmake/git-archive-all.sh
++++ b/cmake/git-archive-all.sh
+@@ -187,12 +187,23 @@ superfile=`head -n 1 $TMPFILE`
+ if [ $VERBOSE -eq 1 ]; then
+     echo -n "looking for subprojects..."
+ fi
+-# find all '.git' dirs, these show us the remaining to-be-archived dirs
+-# we only want directories that are below the current directory
+-find . -mindepth 2 -name '.git' -type d -print | sed -e 's/^\.\///' -e 's/\.git$//' >> $TOARCHIVE
+-# as of version 1.7.8, git places the submodule .git directories under the superprojects .git dir
+-# the submodules get a .git file that points to their .git dir. we need to find all of these too
+-find . -mindepth 2 -name '.git' -type f -print | xargs grep -l "gitdir" | sed -e 's/^\.\///' -e 's/\.git$//' >> $TOARCHIVE
++
++# Find all submodules
++# git submodule status --recursive can have the following output:
++# ```
++#  sha1 module_path git_describe
++# -sha1 module_path git_describe
++# +sha1 module_path git_describe
++# Usha1 module_path git_describe
++#  ```
++# We remove the first space to standardize the output and we
++# remove uninitialized submodules (since git archive will not work on them)
++git submodule status --recursive | \
++  sed 's/^ //' | \
++  sed '/^-/d' | \
++  cut -d" " -f2 | \
++  xargs -I{} echo {}/ >> $TOARCHIVE
++
+ if [ $VERBOSE -eq 1 ]; then
+     echo "done"
+     echo "  found:"
+diff --git a/cmake/header.cmake b/cmake/header.cmake
+index 8a071b4..468e6f5 100644
+--- a/cmake/header.cmake
++++ b/cmake/header.cmake
+@@ -149,44 +149,89 @@ endmacro(_SETUP_PROJECT_HEADER)
+ # This macro generates a configuration header. Macro parameters may be used to
+ # customize it.
+ #
+-# HEADER_DIR    : where to generate the header FILENAME      : how should the
+-# file named LIBRARY_NAME  : CPP symbol prefix, should match the compiled
+-# library name EXPORT_SYMBOl : what symbol controls the switch between symbol
+-# import/export
++# * HEADER_DIR    : where to generate the header
++# * FILENAME      : how the file should be named
++# * LIBRARY_NAME  : CPP symbol prefix, should match the compiled library name
++# * EXPORT_SYMBOL : controls the switch between symbol import/export
+ function(GENERATE_CONFIGURATION_HEADER HEADER_DIR FILENAME LIBRARY_NAME
+          EXPORT_SYMBOL)
++  # cmake-format: off
++  generate_configuration_header_v2(
++    INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include
++    HEADER_DIR ${HEADER_DIR}
++    FILENAME ${FILENAME}
++    LIBRARY_NAME ${LIBRARY_NAME}
++    EXPORT_SYMBOL ${EXPORT_SYMBOL})
++  # cmake-format: on
++endfunction(GENERATE_CONFIGURATION_HEADER)
++
++# ~~~
++# .rst: .. command:: GENERATE_CONFIGURATION_HEADER_V2 (
++#   INCLUDE_DIR <include_dir>
++#   HEADER_DIR <header_dir>
++#   FILENAME <filename>
++#   LIBRARY_NAME <library_name>
++#   EXPORT_SYBMOL <export_symbol>)
++# ~~~
++#
++# This function generates a configuration header at
++# ``<include_dir>/<header_dir>/<filename>``.
++#
++# If INSTALL_GENERATED_HEADERS is ON, the configuration header will be installed
++# in
++# ``${CMAKE_INSTALL_INCLUDEDIR}/<header_dir>``.
++#
++# :param INCLUDE_DIR: Include root directory (absolute).
++#
++# :param HEADER_DIR: Include sub directory.
++#
++# :param FILENAME: Configuration header name.
++#
++# :param LIBRARY_NAME: CPP symbol prefix, should match the compiled library
++# name.
++#
++# :param EXPORT_SYMBOL: Controls the switch between symbol import/export.
++function(GENERATE_CONFIGURATION_HEADER_V2)
++  set(options)
++  set(oneValueArgs INCLUDE_DIR HEADER_DIR FILENAME LIBRARY_NAME EXPORT_SYMBOL)
++  set(multiValueArgs)
++  cmake_parse_arguments(ARGS "${options}" "${oneValueArgs}" "${multiValueArgs}"
++                        ${ARGN})
+ 
+   if(${PROJECT_VERSION_MAJOR} MATCHES UNKNOWN)
+-    set(PROJECT_VERSION_MAJOR_CONFIG ${LIBRARY_NAME}_VERSION_UNKNOWN_TAG)
++    set(PROJECT_VERSION_MAJOR_CONFIG ${ARGS_LIBRARY_NAME}_VERSION_UNKNOWN_TAG)
+   else()
+     set(PROJECT_VERSION_MAJOR_CONFIG ${PROJECT_VERSION_MAJOR})
+   endif()
+ 
+   if(${PROJECT_VERSION_MINOR} MATCHES UNKNOWN)
+-    set(PROJECT_VERSION_MINOR_CONFIG ${LIBRARY_NAME}_VERSION_UNKNOWN_TAG)
++    set(PROJECT_VERSION_MINOR_CONFIG ${ARGS_LIBRARY_NAME}_VERSION_UNKNOWN_TAG)
+   else()
+     set(PROJECT_VERSION_MINOR_CONFIG ${PROJECT_VERSION_MINOR})
+   endif()
+ 
+   if(${PROJECT_VERSION_PATCH} MATCHES UNKNOWN)
+-    set(PROJECT_VERSION_PATCH_CONFIG ${LIBRARY_NAME}_VERSION_UNKNOWN_TAG)
++    set(PROJECT_VERSION_PATCH_CONFIG ${ARGS_LIBRARY_NAME}_VERSION_UNKNOWN_TAG)
+   else()
+     set(PROJECT_VERSION_PATCH_CONFIG ${PROJECT_VERSION_PATCH})
+   endif()
+ 
++  # Set variables for configure_file command
++  set(EXPORT_SYMBOL ${ARGS_EXPORT_SYMBOL})
++  set(LIBRARY_NAME ${ARGS_LIBRARY_NAME})
++
+   # Generate the header.
+-  configure_file(
+-    ${PROJECT_JRL_CMAKE_MODULE_DIR}/config.hh.cmake
+-    ${CMAKE_CURRENT_BINARY_DIR}/include/${HEADER_DIR}/${FILENAME} @ONLY)
++  configure_file(${PROJECT_JRL_CMAKE_MODULE_DIR}/config.hh.cmake
++                 ${ARGS_INCLUDE_DIR}/${ARGS_HEADER_DIR}/${ARGS_FILENAME} @ONLY)
+ 
+   # Install it if requested.
+   if(INSTALL_GENERATED_HEADERS)
+     install(
+-      FILES ${CMAKE_CURRENT_BINARY_DIR}/include/${HEADER_DIR}/${FILENAME}
+-      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${HEADER_DIR}
++      FILES ${ARGS_INCLUDE_DIR}/${ARGS_HEADER_DIR}/${ARGS_FILENAME}
++      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${ARGS_HEADER_DIR}
+       PERMISSIONS OWNER_READ GROUP_READ WORLD_READ OWNER_WRITE)
+-  endif(INSTALL_GENERATED_HEADERS)
+-endfunction(GENERATE_CONFIGURATION_HEADER)
++  endif()
++endfunction(GENERATE_CONFIGURATION_HEADER_V2)
+ 
+ # _SETUP_PROJECT_HEADER_FINALIZE
+ # ------------------------------
+diff --git a/cmake/ide.cmake b/cmake/ide.cmake
+index 76e757e..e1f4dc1 100644
+--- a/cmake/ide.cmake
++++ b/cmake/ide.cmake
+@@ -45,9 +45,9 @@ function(ADD_GROUP GROUP_NAME FILENAMES)
+   foreach(filename ${${FILENAMES}})
+     get_filename_component(filenamePath ${filename} PATH)
+     get_filename_component(filenameName ${filename} NAME)
+-    string(REGEX REPLACE "${PROJECT_BINARY_DIR}" "" filenamePath
++    string(REGEX REPLACE "${PROJECT_BINARY_DIR}/" "" filenamePath
+                          "${filenamePath}/")
+-    string(REGEX REPLACE "${PROJECT_SOURCE_DIR}" "" filenamePath
++    string(REGEX REPLACE "${PROJECT_SOURCE_DIR}/" "" filenamePath
+                          "${filenamePath}/")
+     string(REGEX REPLACE "//" "/" filenamePath ${filenamePath})
+     list(APPEND REDUCED_FILENAMES ${filenamePath})
+diff --git a/cmake/package-config.cmake b/cmake/package-config.cmake
+index d7134c1..7d8e8da 100644
+--- a/cmake/package-config.cmake
++++ b/cmake/package-config.cmake
+@@ -91,9 +91,12 @@ macro(ADD_PROJECT_DEPENDENCY)
+     set(_ext "find-external/${PARSED_ARGN_FIND_EXTERNAL}")
+     set(CMAKE_MODULE_PATH "${PROJECT_JRL_CMAKE_MODULE_DIR}/${_ext}"
+                           ${CMAKE_MODULE_PATH})
++    set(_ext_path "${CONFIG_INSTALL_DIR}/${_ext}")
++    if(NOT IS_ABSOLUTE ${_ext_path})
++      set(_ext_path "\${PACKAGE_PREFIX_DIR}/${_ext_path}")
++    endif()
+     set(_PACKAGE_CONFIG_DEPENDENCIES_FIND_EXTERNAL
+-        "${_PACKAGE_CONFIG_DEPENDENCIES_FIND_EXTERNAL}\n \${PACKAGE_PREFIX_DIR}/${CONFIG_INSTALL_DIR}/${_ext}"
+-    )
++        "${_PACKAGE_CONFIG_DEPENDENCIES_FIND_EXTERNAL}\n  ${_ext_path}")
+     install(DIRECTORY "${PROJECT_JRL_CMAKE_MODULE_DIR}/${_ext}"
+             DESTINATION "${CONFIG_INSTALL_DIR}/find-external")
+   endif()
+diff --git a/cmake/pkg-config.cmake b/cmake/pkg-config.cmake
+index 327288d..b039789 100644
+--- a/cmake/pkg-config.cmake
++++ b/cmake/pkg-config.cmake
+@@ -824,7 +824,6 @@ macro(PKG_CONFIG_APPEND_LIBS LIBS)
+       if(TARGET ${LIB})
+         get_target_property(TARGET_TYPE ${LIB} TYPE)
+ 
+-        message(STATUS "target_type: ${TARGET_TYPE}")
+         # CMake 3.16 until 3.19 do not properly handle the properties for
+         # INTERFACE.
+         if(${TARGET_TYPE} STREQUAL "INTERFACE_LIBRARY")
+diff --git a/cmake/python.cmake b/cmake/python.cmake
+index dcfa17f..99d8fff 100644
+--- a/cmake/python.cmake
++++ b/cmake/python.cmake
+@@ -1,4 +1,4 @@
+-# Copyright (C) 2008-2021 LAAS-CNRS, JRL AIST-CNRS, INRIA.
++# Copyright (C) 2008-2024 LAAS-CNRS, JRL AIST-CNRS, INRIA.
+ #
+ # This program is free software: you can redistribute it and/or modify it under
+ # the terms of the GNU General Public License as published by the Free Software
+@@ -112,7 +112,7 @@ macro(FINDPYTHON)
+         endif()
+       endif()
+ 
+-      if(NOT DEFINED Python_EXCUTABLE)
++      if(NOT DEFINED Python_EXECUTABLE)
+         set(Python_EXECUTABLE ${PYTHON_EXECUTABLE})
+       endif()
+     else()
+@@ -134,26 +134,32 @@ macro(FINDPYTHON)
+         ERROR_VARIABLE _PYTHON_VERSION_OUTPUT
+         OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
+ 
++      if(NOT "${_PYTHON_VERSION_RESULT_VARIABLE}" STREQUAL "0")
++        message(FATAL_ERROR "${PYTHON_EXECUTABLE} --version did not succeed.")
++      endif()
++      string(REGEX REPLACE "Python " "" _PYTHON_VERSION
++                           ${_PYTHON_VERSION_OUTPUT})
++      string(REGEX REPLACE "\\." ";" _PYTHON_VERSION ${_PYTHON_VERSION})
++      list(GET _PYTHON_VERSION 0 _PYTHON_VERSION_MAJOR)
++
+       # Provide some hints according to the current PYTHON_EXECUTABLE
+       if(NOT DEFINED PYTHON_INCLUDE_DIR)
++        if(_PYTHON_VERSION_MAJOR EQUAL "2")
++          set(_PYTHON_INCLUDE_DIR_CMD
++              "import distutils.sysconfig as sysconfig; print(sysconfig.get_python_inc())"
++          )
++        else()
++          set(_PYTHON_INCLUDE_DIR_CMD
++              "import sysconfig; print(sysconfig.get_path('include'))")
++        endif()
+         execute_process(
+-          COMMAND
+-            "${PYTHON_EXECUTABLE}" "-c"
+-            "import distutils.sysconfig as sysconfig; print(sysconfig.get_python_inc())"
++          COMMAND "${PYTHON_EXECUTABLE}" "-c" "${_PYTHON_INCLUDE_DIR_CMD}"
+           OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
+           ERROR_QUIET)
+         string(STRIP "${PYTHON_INCLUDE_DIR}" PYTHON_INCLUDE_DIR)
+         file(TO_CMAKE_PATH "${PYTHON_INCLUDE_DIR}" PYTHON_INCLUDE_DIR)
+       endif()
+ 
+-      if(NOT "${_PYTHON_VERSION_RESULT_VARIABLE}" STREQUAL "0")
+-        message(FATAL_ERROR "${PYTHON_EXECUTABLE} --version did not succeed.")
+-      endif(NOT "${_PYTHON_VERSION_RESULT_VARIABLE}" STREQUAL "0")
+-      string(REGEX REPLACE "Python " "" _PYTHON_VERSION
+-                           ${_PYTHON_VERSION_OUTPUT})
+-      string(REGEX REPLACE "\\." ";" _PYTHON_VERSION ${_PYTHON_VERSION})
+-      list(GET _PYTHON_VERSION 0 _PYTHON_VERSION_MAJOR)
+-
+       # Hint for finding the right Python version
+       set(Python_EXECUTABLE ${PYTHON_EXECUTABLE})
+       set(Python${_PYTHON_VERSION_MAJOR}_EXECUTABLE ${PYTHON_EXECUTABLE})
+@@ -171,11 +177,11 @@ macro(FINDPYTHON)
+           message(FATAL_ERROR "Python executable has not been found.")
+         else()
+           set(_PYTHON_VERSION_MAJOR 3)
+-        endif(NOT Python3_FOUND)
++        endif()
+       else()
+         set(_PYTHON_VERSION_MAJOR 2)
+-      endif(NOT Python2_FOUND)
+-    endif(PYTHON_EXECUTABLE)
++      endif()
++    endif()
+ 
+     set(_PYTHON_PREFIX "Python${_PYTHON_VERSION_MAJOR}")
+ 
+@@ -203,12 +209,12 @@ macro(FINDPYTHON)
+       file(TO_CMAKE_PATH "${NUMPY_INCLUDE_DIRS}" NUMPY_INCLUDE_DIRS)
+     endif()
+ 
+-  else(NOT CMAKE_VERSION VERSION_LESS "3.12")
++  else()
+ 
+     find_package(PythonInterp ${ARGN})
+     if(NOT ${PYTHONINTERP_FOUND} STREQUAL TRUE)
+       message(FATAL_ERROR "Python executable has not been found.")
+-    endif(NOT ${PYTHONINTERP_FOUND} STREQUAL TRUE)
++    endif()
+     message(STATUS "PythonInterp: ${PYTHON_EXECUTABLE}")
+ 
+     # Set PYTHON_INCLUDE_DIR variables if it is not defined by the user
+@@ -216,17 +222,23 @@ macro(FINDPYTHON)
+       # Retrieve the corresponding value of PYTHON_INCLUDE_DIR if it is not
+       # defined
+       if(NOT DEFINED PYTHON_INCLUDE_DIR)
++        if(PYTHON_VERSION_MAJOR EQUAL "2")
++          set(_PYTHON_INCLUDE_DIR_CMD
++              "import distutils.sysconfig as sysconfig; print(sysconfig.get_python_inc())"
++          )
++        else()
++          set(_PYTHON_INCLUDE_DIR_CMD
++              "import sysconfig; print(sysconfig.get_path('include'))")
++        endif()
+         execute_process(
+-          COMMAND
+-            "${PYTHON_EXECUTABLE}" "-c"
+-            "import distutils.sysconfig as sysconfig; print(sysconfig.get_python_inc())"
++          COMMAND "${PYTHON_EXECUTABLE}" "-c" "${_PYTHON_INCLUDE_DIR_CMD}"
+           OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
+           ERROR_QUIET)
+         string(STRIP "${PYTHON_INCLUDE_DIR}" PYTHON_INCLUDE_DIR)
+-      endif(NOT DEFINED PYTHON_INCLUDE_DIR)
++      endif()
+       set(PYTHON_INCLUDE_DIRS ${PYTHON_INCLUDE_DIR})
+ 
+-    endif(DEFINED PYTHON_EXECUTABLE)
++    endif()
+ 
+     # Inform PythonLibs of the required version of PythonInterp
+     set(PYTHONLIBS_VERSION_STRING ${PYTHON_VERSION_STRING})
+@@ -235,7 +247,7 @@ macro(FINDPYTHON)
+     message(STATUS "PythonLibraries: ${PYTHON_LIBRARIES}")
+     if(NOT ${PYTHONLIBS_FOUND} STREQUAL TRUE)
+       message(FATAL_ERROR "Python has not been found.")
+-    endif(NOT ${PYTHONLIBS_FOUND} STREQUAL TRUE)
++    endif()
+ 
+     string(REPLACE "." ";" _PYTHONLIBS_VERSION ${PYTHONLIBS_VERSION_STRING})
+     list(GET _PYTHONLIBS_VERSION 0 PYTHONLIBS_VERSION_MAJOR)
+@@ -247,10 +259,9 @@ macro(FINDPYTHON)
+         FATAL_ERROR
+           "Python interpreter and libraries are in different version: ${PYTHON_VERSION_STRING} vs ${PYTHONLIBS_VERSION_STRING}"
+       )
+-    endif(NOT ${PYTHON_VERSION_MAJOR} EQUAL ${PYTHONLIBS_VERSION_MAJOR}
+-          OR NOT ${PYTHON_VERSION_MINOR} EQUAL ${PYTHONLIBS_VERSION_MINOR})
++    endif()
+ 
+-  endif(NOT CMAKE_VERSION VERSION_LESS "3.12")
++  endif()
+ 
+   # Find PYTHON_LIBRARY_DIRS
+   get_filename_component(PYTHON_LIBRARY_DIRS "${PYTHON_LIBRARIES}" PATH)
+@@ -259,7 +270,7 @@ macro(FINDPYTHON)
+ 
+   if(PYTHON_SITELIB)
+     file(TO_CMAKE_PATH "${PYTHON_SITELIB}" PYTHON_SITELIB)
+-  else(PYTHON_SITELIB)
++  else()
+     # Use either site-packages (default) or dist-packages (Debian packages)
+     # directory
+     option(PYTHON_DEB_LAYOUT "Enable Debian-style Python package layout" OFF)
+@@ -267,17 +278,23 @@ macro(FINDPYTHON)
+     option(PYTHON_STANDARD_LAYOUT "Enable standard Python package layout" OFF)
+ 
+     if(PYTHON_STANDARD_LAYOUT)
+-      set(PYTHON_SITELIB_CMD
++      set(_PYTHON_SITELIB_CMD
+           "import sys, os; print(os.sep.join(['lib', 'python' + '.'.join(sys.version.split('.')[:2]), 'site-packages']))"
+       )
+-    else(PYTHON_STANDARD_LAYOUT)
+-      set(PYTHON_SITELIB_CMD
+-          "from distutils import sysconfig; print(sysconfig.get_python_lib(prefix='', plat_specific=False))"
+-      )
+-    endif(PYTHON_STANDARD_LAYOUT)
++    else()
++      if(PYTHON_VERSION_MAJOR EQUAL "2")
++        set(_PYTHON_SITELIB_CMD
++            "from distutils import sysconfig; print(sysconfig.get_python_lib(prefix='', plat_specific=False))"
++        )
++      else()
++        set(_PYTHON_SITELIB_CMD
++            "import sysconfig; from pathlib import Path; print(Path(sysconfig.get_path('purelib')).relative_to(sysconfig.get_path('data')))"
++        )
++      endif()
++    endif()
+ 
+     execute_process(
+-      COMMAND "${PYTHON_EXECUTABLE}" "-c" "${PYTHON_SITELIB_CMD}"
++      COMMAND "${PYTHON_EXECUTABLE}" "-c" "${_PYTHON_SITELIB_CMD}"
+       OUTPUT_VARIABLE PYTHON_SITELIB
+       OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+ 
+@@ -285,7 +302,7 @@ macro(FINDPYTHON)
+     if(PYTHON_DEB_LAYOUT)
+       string(REPLACE "site-packages" "dist-packages" PYTHON_SITELIB
+                      "${PYTHON_SITELIB}")
+-    endif(PYTHON_DEB_LAYOUT)
++    endif()
+ 
+     # If PYTHON_PACKAGES_DIR is defined, then force the Python packages
+     # directory name
+@@ -293,8 +310,8 @@ macro(FINDPYTHON)
+       string(REGEX
+              REPLACE "(site-packages|dist-packages)" "${PYTHON_PACKAGES_DIR}"
+                      PYTHON_SITELIB "${PYTHON_SITELIB}")
+-    endif(PYTHON_PACKAGES_DIR)
+-  endif(PYTHON_SITELIB)
++    endif()
++  endif()
+ 
+   message(STATUS "Python site lib: ${PYTHON_SITELIB}")
+   message(STATUS "Python include dirs: ${PYTHON_INCLUDE_DIRS}")
+@@ -306,10 +323,10 @@ macro(FINDPYTHON)
+     execute_process(
+       COMMAND
+         "${PYTHON_EXECUTABLE}" "-c"
+-        "from distutils.sysconfig import get_config_var; print('.' + get_config_var('SOABI'))"
++        "from sysconfig import get_config_var; print('.' + get_config_var('SOABI'))"
+       OUTPUT_VARIABLE PYTHON_SOABI)
+     string(STRIP ${PYTHON_SOABI} PYTHON_SOABI)
+-  endif(PYTHON_VERSION_MAJOR EQUAL 3 AND NOT WIN32)
++  endif()
+ 
+   # Get PYTHON_EXT_SUFFIX
+   set(PYTHON_EXT_SUFFIX "")
+@@ -317,10 +334,10 @@ macro(FINDPYTHON)
+     execute_process(
+       COMMAND
+         "${PYTHON_EXECUTABLE}" "-c"
+-        "from distutils.sysconfig import get_config_var; print(get_config_var('EXT_SUFFIX'))"
++        "from sysconfig import get_config_var; print(get_config_var('EXT_SUFFIX'))"
+       OUTPUT_VARIABLE PYTHON_EXT_SUFFIX)
+     string(STRIP ${PYTHON_EXT_SUFFIX} PYTHON_EXT_SUFFIX)
+-  endif(PYTHON_VERSION_MAJOR EQUAL 3)
++  endif()
+   if("${PYTHON_EXT_SUFFIX}" STREQUAL "")
+     if(WIN32)
+       set(PYTHON_EXT_SUFFIX ".pyd")
+@@ -435,7 +452,7 @@ macro(DYNAMIC_GRAPH_PYTHON_MODULE SUBMODULENAME LIBRARYNAME TARGETNAME)
+ 
+   if(UNIX AND NOT APPLE)
+     target_link_libraries(${PYTHON_MODULE} PUBLIC "-Wl,--no-as-needed")
+-  endif(UNIX AND NOT APPLE)
++  endif()
+   target_link_libraries(${PYTHON_MODULE} PUBLIC ${LIBRARYNAME}
+                                                 dynamic-graph::dynamic-graph)
+   target_link_boost_python(${PYTHON_MODULE} PUBLIC)
+@@ -512,4 +529,29 @@ macro(FIND_NUMPY)
+   endif()
+ endmacro()
+ 
++# .rst: .. command:: FIND_SCIPY()
++#
++# Detect scipy module.
++#
++macro(FIND_SCIPY)
++  message(STATUS "Checking for SciPy")
++  execute_process(
++    COMMAND "${PYTHON_EXECUTABLE}" "-c" "import scipy; print (True)"
++    OUTPUT_VARIABLE IS_SCIPY
++    ERROR_QUIET)
++
++  if(NOT IS_SCIPY)
++    message(FATAL_ERROR "Failed to detect scipy")
++  else()
++    # Retrive SCIPY_VERSION
++    execute_process(
++      COMMAND "${PYTHON_EXECUTABLE}" "-c"
++              "import scipy; print (scipy.__version__)"
++      OUTPUT_VARIABLE SCIPY_VERSION
++      ERROR_QUIET)
++    string(REGEX REPLACE "\n$" "" SCIPY_VERSION "${SCIPY_VERSION}")
++    message(STATUS "  SCIPY_VERSION=${SCIPY_VERSION}")
++  endif()
++endmacro()
++
+ include(${CMAKE_CURRENT_LIST_DIR}/python-helpers.cmake)
+diff --git a/cmake/release.cmake b/cmake/release.cmake
+index d4bfae5..73f0410 100644
+--- a/cmake/release.cmake
++++ b/cmake/release.cmake
+@@ -49,6 +49,7 @@
+ macro(RELEASE_SETUP)
+   if(UNIX)
+     find_program(GIT git)
++    string(TIMESTAMP TODAY "%Y-%m-%d")
+ 
+     # Set LD_LIBRARY_PATH
+     if(APPLE)
+@@ -60,20 +61,20 @@ macro(RELEASE_SETUP)
+     add_custom_target(
+       release_package_xml
+       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMENT "Update package.xml"
+       COMMAND
+-        echo "Updating package.xml to $$VERSION" && sed -i.back
+-        \"s|<version>.*</version>|<version>$$VERSION</version>|g\" package.xml
+-        && rm package.xml.back && ${GIT} add package.xml && ${GIT} commit -m
+-        "release: Update package.xml version to $$VERSION" && echo
++        sed -i.back \"s|<version>.*</version>|<version>$$VERSION</version>|g\"
++        package.xml && rm package.xml.back && ${GIT} add package.xml && ${GIT}
++        commit -m "release: Update package.xml version to $$VERSION" && echo
+         "Updated package.xml and committed")
+ 
+     add_custom_target(
+       release_pyproject_toml
+       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMENT "Update pyproject.toml"
+       COMMAND
+-        echo "Updating pyproject.toml to $$VERSION" && ${PYTHON_EXECUTABLE}
+-        ${PROJECT_JRL_CMAKE_MODULE_DIR}/pyproject.py $$VERSION && if !
+-        (git diff --quiet pyproject.toml) ; then
++        ${PYTHON_EXECUTABLE} ${PROJECT_JRL_CMAKE_MODULE_DIR}/pyproject.py
++        $$VERSION && if ! (git diff --quiet pyproject.toml) ; then
+         (${GIT}
+          add
+          pyproject.toml
+@@ -87,41 +88,78 @@ macro(RELEASE_SETUP)
+          "Updated pyproject.toml and committed") ; fi)
+ 
+     add_custom_target(
+-      release
++      release_changelog
+       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMENT "Update CHANGELOG.md"
+       COMMAND
+-        export LD_LIBRARY_PATH=$ENV{LD_LIBRARY_PATH} && export
+-        ${LD_LIBRARY_PATH_VARIABLE_NAME}=$ENV{${LD_LIBRARY_PATH_VARIABLE_NAME}}
+-        && export PYTHONPATH=$ENV{PYTHONPATH} && ! test x$$VERSION = x ||
+-        (echo "Please set a version for this release" && false) # Update version
+-                                                                # in package.xml
+-                                                                # if it exists
+-        && if [ -f "package.xml" ]; then (make -C ${CMAKE_BINARY_DIR}
+-                                          release_package_xml) ; fi
+-        # Update version in pyproject.toml if it exists
+-        && if [ -f "pyproject.toml" ]; then (make -C ${CMAKE_BINARY_DIR}
+-                                             release_pyproject_toml) ; fi &&
+-        ${GIT} tag -s v$$VERSION -m "Release of version $$VERSION." && cd
+-        ${CMAKE_BINARY_DIR} && cmake ${PROJECT_SOURCE_DIR} && make distcheck ||
+-        (echo
+-         "Please fix distcheck first."
+-         &&
+-         cd
+-         ${PROJECT_SOURCE_DIR}
++        sed -i.back
++        "\"s|\#\# \\[Unreleased\\]|\#\# [Unreleased]\\n\\n\#\# [$$VERSION] - ${TODAY}|\""
++        CHANGELOG.md && sed -i.back
++        "\"s|^\\[Unreleased]: \\(https://.*compare/\\)\\(v.*\\)...HEAD|[Unreleased]: \\1v$$VERSION...HEAD\\n[$$VERSION]: \\1\\2...v$$VERSION|\""
++        CHANGELOG.md && if ! (git diff --quiet CHANGELOG.md) ; then
++        (${GIT}
++         add
++         CHANGELOG.md
+          &&
+          ${GIT}
+-         tag
+-         -d
+-         v$$VERSION
+-         &&
+-         cd
+-         ${CMAKE_BINARY_DIR}
+-         &&
+-         cmake
+-         ${PROJECT_SOURCE_DIR}
++         commit
++         -m
++         "release: Update CHANGELOG.md for $$VERSION"
+          &&
+-         false) && make dist && make distclean && echo
+-        "Please, run 'git push --tags' and upload the tarball to github to finalize this release."
++         echo
++         "Updated CHANGELOG.md and committed") ; fi)
++
++    add_custom_target(
++      release_pixi_toml
++      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMENT "Update pixi.toml"
++      COMMAND
++        # cmake-format: off
++        ${PYTHON_EXECUTABLE} ${PROJECT_JRL_CMAKE_MODULE_DIR}/pixi.py $$VERSION &&
++        if ! (git diff --quiet pixi.toml) ; then
++        (
++         ${GIT} add pixi.toml &&
++         ${GIT} commit -m "release: Update pixi.toml version to $$VERSION" &&
++         echo "Updated pixi.toml and committed"
++        ) ; fi
++# cmake-format: on
++    )
++
++    set(BUILD_CMD ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target)
++    add_custom_target(
++      release
++      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMENT "Create a new release"
++      COMMAND
++        # cmake-format: off
++        export LD_LIBRARY_PATH=$ENV{LD_LIBRARY_PATH} &&
++        export ${LD_LIBRARY_PATH_VARIABLE_NAME}=$ENV{${LD_LIBRARY_PATH_VARIABLE_NAME}} &&
++        export PYTHONPATH=$ENV{PYTHONPATH} &&
++        ! test x$$VERSION = x || (echo "Please set a version for this release" && false) &&
++        # Update version in package.xml if it exists
++        if [ -f "package.xml" ]; then (${BUILD_CMD} release_package_xml) ; fi &&
++        # Update version in pyproject.toml if it exists
++        if [ -f "pyproject.toml" ]; then (${BUILD_CMD} release_pyproject_toml) ; fi &&
++        # Update CHANGELOG.md if it exists
++        if [ -f "CHANGELOG.md" ]; then (${BUILD_CMD} release_changelog) ; fi &&
++        # Update version in pixi.toml if it exists
++        if [ -f "pixi.toml" ]; then (${BUILD_CMD} release_pixi_toml) ; fi &&
++        ${GIT} tag -s v$$VERSION -m "Release of version $$VERSION." &&
++        cd ${CMAKE_BINARY_DIR} &&
++        cmake ${PROJECT_SOURCE_DIR} &&
++        ${BUILD_CMD} distcheck ||
++        (
++         echo "Please fix distcheck first." &&
++         cd ${PROJECT_SOURCE_DIR} &&
++         ${GIT} tag -d v$$VERSION &&
++         cd ${CMAKE_BINARY_DIR} &&
++         cmake ${PROJECT_SOURCE_DIR} &&
++         false
++        ) &&
++        ${BUILD_CMD} dist &&
++        ${BUILD_CMD} distclean &&
++        echo "Please, run 'git push --tags' and upload the tarball to github to finalize this release."
++# cmake-format: on
+     )
+   endif()
+ endmacro()
+diff --git a/cmake/stubs.cmake b/cmake/stubs.cmake
+index 2e60ef4..31a76bc 100644
+--- a/cmake/stubs.cmake
++++ b/cmake/stubs.cmake
+@@ -60,7 +60,8 @@ endmacro(LOAD_STUBGEN)
+ #
+ # Generate the stubs associated to a given project. If optional arguments (which
+ # should be CMake targets) are supplied, then the stubs will only be generated
+-# after every specified target is built.
++# after every specified target is built. On windows, the PATH will also be
++# modified to find the provided targets.
+ #
+ # .rst: .. variable:: module_path
+ #
+@@ -96,15 +97,38 @@ function(GENERATE_STUBS module_path module_name module_install_dir)
+     set(PYTHONPATH ${module_path})
+   endif($ENV{PYTHONPATH})
+ 
++  # On Windows with Python 3.8+, Python doesn't search DLL in PATH anymore.
++  #
++  # DLL are build in a different directory than the module, we must then specify
++  # to pybind11_stubgen where to find it with the
++  # PYBIND11_STUBGEN_ADD_DLL_DIRECTORY environment variable.
++  #
++  # See https://github.com/python/cpython/issues/87339#issuecomment-1093902060
++  set(ENV_DLL_PATH)
++  set(optional_args ${ARGN})
++  if(WIN32)
++    foreach(py_target IN LISTS optional_args)
++      if(TARGET ${py_target})
++        set(_is_lib
++            "$<STREQUAL:$<TARGET_PROPERTY:${py_target},TYPE>,SHARED_LIBRARY>")
++        set(_target_dir "$<TARGET_FILE_DIR:${py_target}>")
++        set(_target_path $<${_is_lib}:${_target_dir}> ${_target_path})
++      endif()
++    endforeach()
++    # Join the list with escaped semicolon to keep the environment path format
++    # when giving it to `add_custom_target`
++    string(REPLACE ";" "\\\;" _join_target_path "${_target_path}")
++    set(ENV_DLL_PATH PYBIND11_STUBGEN_ADD_DLL_DIRECTORY=${_join_target_path})
++  endif()
++
+   add_custom_target(
+     ${target_name} ALL
+     COMMAND
+-      ${CMAKE_COMMAND} -E env PYTHONPATH=${PYTHONPATH} "${PYTHON_EXECUTABLE}"
+-      "${STUBGEN_MAIN_FILE}" "-o" "${module_path}" "${module_name}"
+-      "--boost-python" --ignore-invalid signature "--no-setup-py"
+-      "--root-module-suffix" ""
++      ${CMAKE_COMMAND} -E env ${ENV_DLL_PATH} ${CMAKE_COMMAND} -E env
++      PYTHONPATH=${PYTHONPATH} "${PYTHON_EXECUTABLE}" "${STUBGEN_MAIN_FILE}"
++      "-o" "${module_path}" "${module_name}" "--boost-python" --ignore-invalid
++      signature "--no-setup-py" "--root-module-suffix" ""
+     VERBATIM)
+-  set(optional_args ${ARGN})
+   foreach(py_target IN LISTS optional_args)
+     if(TARGET ${py_target})
+       message(
+diff --git a/cmake/test.cmake b/cmake/test.cmake
+index 0e51e38..7b51fe3 100644
+--- a/cmake/test.cmake
++++ b/cmake/test.cmake
+@@ -98,7 +98,7 @@ macro(ADD_UNIT_TEST NAME)
+ 
+   add_dependencies(build_tests ${NAME})
+ 
+-  add_test(${NAME} ${RUNTIME_OUTPUT_DIRECTORY}/${NAME})
++  add_test(NAME ${NAME} COMMAND ${NAME})
+   # Support definition of DYLD_LIBRARY_PATH for OSX systems
+   if(APPLE)
+     set_tests_properties(
+@@ -117,29 +117,15 @@ endmacro(
+   NAME
+   SOURCE)
+ 
+-# .rst: .. command:: ADD_PYTHON_UNIT_TEST (NAME SOURCE [MODULES...])
++# .rst: .. command:: COMPUTE_PYTHONPATH (result [MODULES...])
+ #
+-# Add a test called `NAME` that runs an equivalent of ``python ${SOURCE}``,
+-# optionnaly with a `PYTHONPATH` set to `CMAKE_BINARY_DIR/MODULE_PATH` for each
+-# MODULES `SOURCE` is relative to `PROJECT_SOURCE_DIR`
++# Fill `result` with all necessary environment variables (`PYTHONPATH`,
++# `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) to load the `MODULES` in
++# `CMAKE_BINARY_DIR` (`CMAKE_BINARY_DIR/MODULE_PATH`)
+ #
+ # .. note:: :command:`FINDPYTHON` should have been called first.
+ #
+-macro(ADD_PYTHON_UNIT_TEST NAME SOURCE)
+-  if(ENABLE_COVERAGE)
+-    set_property(GLOBAL PROPERTY JRL_CMAKEMODULES_HAS_PYTHON_COVERAGE ON)
+-    set(PYTHONPATH "${CMAKE_INSTALL_PREFIX}/${PYTHON_SITELIB}")
+-    add_test(
+-      NAME ${NAME}
+-      COMMAND ${PYTHON_EXECUTABLE} -m coverage run --branch -p
+-              --source=${PYTHONPATH} "${PROJECT_SOURCE_DIR}/${SOURCE}"
+-      WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
+-  else()
+-    add_test(NAME ${NAME} COMMAND ${PYTHON_EXECUTABLE}
+-                                  "${PROJECT_SOURCE_DIR}/${SOURCE}")
+-    set(PYTHONPATH)
+-  endif()
+-
++function(COMPUTE_PYTHONPATH result)
+   set(MODULES "${ARGN}") # ARGN is not a variable
+   foreach(MODULE_PATH IN LISTS MODULES)
+     if(CMAKE_GENERATOR MATCHES "Visual Studio|Xcode")
+@@ -163,7 +149,7 @@ macro(ADD_PYTHON_UNIT_TEST NAME SOURCE)
+   if(WIN32)
+     # ensure that severals paths stay together as ENV variable PYTHONPATH when
+     # passed to python test via PROPERTIES
+-    string(REPLACE ";" "\;" PYTHONPATH_STR "${PYTHONPATH}")
++    string(REPLACE ";" "\\\;" PYTHONPATH_STR "${PYTHONPATH}")
+   else(WIN32)
+     string(REPLACE ";" "${PATHSEP}" PYTHONPATH_STR "${PYTHONPATH}")
+   endif(WIN32)
+@@ -172,12 +158,106 @@ macro(ADD_PYTHON_UNIT_TEST NAME SOURCE)
+     list(APPEND ENV_VARIABLES "LD_LIBRARY_PATH=$ENV{LD_LIBRARY_PATH}")
+     list(APPEND ENV_VARIABLES "DYLD_LIBRARY_PATH=$ENV{DYLD_LIBRARY_PATH}")
+   endif(APPLE)
++
++  set(${result}
++      ${ENV_VARIABLES}
++      PARENT_SCOPE)
++endfunction()
++
++# .rst: .. command:: ADD_PYTHON_UNIT_TEST (NAME SOURCE [MODULES...])
++#
++# Add a test called `NAME` that runs an equivalent of ``python ${SOURCE}``,
++# optionnaly with a `PYTHONPATH` set to `CMAKE_BINARY_DIR/MODULE_PATH` for each
++# MODULES `SOURCE` is relative to `PROJECT_SOURCE_DIR`
++#
++# .. note:: :command:`FINDPYTHON` should have been called first.
++#
++macro(ADD_PYTHON_UNIT_TEST NAME SOURCE)
++  if(ENABLE_COVERAGE)
++    set_property(GLOBAL PROPERTY JRL_CMAKEMODULES_HAS_PYTHON_COVERAGE ON)
++    set(PYTHONPATH "${CMAKE_INSTALL_PREFIX}/${PYTHON_SITELIB}")
++    add_test(
++      NAME ${NAME}
++      COMMAND ${PYTHON_EXECUTABLE} -m coverage run --branch -p
++              --source=${PYTHONPATH} "${PROJECT_SOURCE_DIR}/${SOURCE}"
++      WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
++  else()
++    add_test(NAME ${NAME} COMMAND ${PYTHON_EXECUTABLE}
++                                  "${PROJECT_SOURCE_DIR}/${SOURCE}")
++    set(PYTHONPATH)
++  endif()
++
++  set(MODULES "${ARGN}") # ARGN is not a variable
++  compute_pythonpath(ENV_VARIABLES ${MODULES})
+   set_tests_properties(${NAME} PROPERTIES ENVIRONMENT "${ENV_VARIABLES}")
+ endmacro(
+   ADD_PYTHON_UNIT_TEST
+   NAME
+   SOURCE)
+ 
++# .rst: .. command:: ADD_PYTHON_MEMORYCHECK_UNIT_TEST (NAME SOURCE [MODULES...])
++#
++# Add a test called `NAME` that runs an equivalent of ``valgrind -- python
++# ${SOURCE}``, optionnaly with a `PYTHONPATH` set to
++# `CMAKE_BINARY_DIR/MODULE_PATH` for each MODULES. `SOURCE` is relative to
++# `PROJECT_SOURCE_DIR`.
++#
++# .. note:: :command:`FINDPYTHON` should have been called first. .. note:: Only
++# work if valgrind is installed
++#
++macro(ADD_PYTHON_MEMORYCHECK_UNIT_TEST NAME SOURCE)
++  add_python_memorycheck_unit_test_v2(NAME ${NAME} SOURCE ${SOURCE} MODULES
++                                      ${ARGN})
++endmacro()
++
++# ~~~
++# .rst: .. command:: ADD_PYTHON_MEMORYCHECK_UNIT_TEST_V2(
++#   NAME <name>
++#   SOURCE <source>
++#   [SUPP <supp>]
++#   [MODULES <modules>...])
++# ~~~
++#
++# Add a test that run a Python script through Valgrind to test if a Python
++# script leak memory.
++#
++# :param NAME: Test name.
++#
++# :param SOURCE: Test source path relative to project source dir.
++#
++# :param SUPP: optional valgrind suppressions file path relative to project
++# source dir.
++#
++# :param MODULES: Set the `PYTHONPATH` environment variable to
++# `CMAKE_BINARY_DIR/<modules>...`.
++#
++# .. note:: :command:`FINDPYTHON` should have been called first.
++#
++# .. note:: Only work if valgrind is installed.
++macro(ADD_PYTHON_MEMORYCHECK_UNIT_TEST_V2)
++  if(MEMORYCHECK_COMMAND AND MEMORYCHECK_COMMAND MATCHES ".*valgrind$")
++    set(options)
++    set(oneValueArgs NAME SOURCE SUPP)
++    set(multiValueArgs MODULES)
++    cmake_parse_arguments(ARGS "${options}" "${oneValueArgs}"
++                          "${multiValueArgs}" ${ARGN})
++
++    set(TEST_FILE_NAME memorycheck_unit_test_${ARGS_NAME}.cmake)
++    set(PYTHON_TEST_SCRIPT "${PROJECT_SOURCE_DIR}/${ARGS_SOURCE}")
++    if(ARGS_SUPP)
++      set(VALGRIND_SUPP_FILE "${PROJECT_SOURCE_DIR}/${ARGS_SUPP}")
++    endif()
++    configure_file(
++      ${PROJECT_JRL_CMAKE_MODULE_DIR}/memorycheck_unit_test.cmake.in
++      ${TEST_FILE_NAME} @ONLY)
++
++    add_test(NAME ${ARGS_NAME} COMMAND ${CMAKE_COMMAND} -P ${TEST_FILE_NAME})
++
++    compute_pythonpath(ENV_VARIABLES ${ARGS_MODULES})
++    set_tests_properties(${ARGS_NAME} PROPERTIES ENVIRONMENT "${ENV_VARIABLES}")
++  endif()
++endmacro()
++
+ # .rst: .. command:: ADD_JULIA_UNIT_TEST (NAME SOURCE [MODULES...])
+ #
+ # Add a test called `NAME` that runs an equivalent of ``julia ${SOURCE}``.
+diff --git a/cmake/uninstall.cmake b/cmake/uninstall.cmake
+index 4bd9895..5a60ec0 100644
+--- a/cmake/uninstall.cmake
++++ b/cmake/uninstall.cmake
+@@ -19,18 +19,38 @@
+ # Add custom rule to uninstall the package.
+ #
+ macro(_SETUP_PROJECT_UNINSTALL)
++  # Detect if the .catkin was created previously
++  if(NOT DEFINED PACKAGE_CREATES_DOT_CATKIN
++     OR NOT "${PACKAGE_PREVIOUS_INSTALL_PREFIX}" STREQUAL
++        "${CMAKE_INSTALL_PREFIX}")
++    set(PACKAGE_PREVIOUS_INSTALL_PREFIX
++        "${CMAKE_INSTALL_PREFIX}"
++        CACHE INTERNAL "Cache install prefix given to the package")
++    if(EXISTS "${CMAKE_INSTALL_PREFIX}/.catkin")
++      set(PACKAGE_CREATES_DOT_CATKIN
++          FALSE
++          CACHE INTERNAL "")
++    else()
++      set(PACKAGE_CREATES_DOT_CATKIN
++          TRUE
++          CACHE INTERNAL "")
++    endif()
++  endif()
+   # FIXME: it is utterly stupid to rely on the install manifest. Can't we just
+   # remember what we install ?!
+   configure_file(
+     "${CMAKE_CURRENT_LIST_DIR}/cmake_uninstall.cmake.in"
+-    "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake" IMMEDIATE @ONLY)
++    "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake" @ONLY)
+ 
+   add_custom_target(
+-    uninstall "${CMAKE_COMMAND}" -P
+-              "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake")
++    uninstall
++    "${CMAKE_COMMAND}"
++    -DPACKAGE_CREATES_DOT_CATKIN=${PACKAGE_CREATES_DOT_CATKIN} -P
++    "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake")
+ 
+-  configure_file("${CMAKE_CURRENT_LIST_DIR}/cmake_reinstall.cmake.in"
+-                 "${PROJECT_BINARY_DIR}/cmake/cmake_reinstall.cmake.configured")
++  configure_file(
++    "${CMAKE_CURRENT_LIST_DIR}/cmake_reinstall.cmake.in"
++    "${PROJECT_BINARY_DIR}/cmake/cmake_reinstall.cmake.configured" @ONLY)
+   if(DEFINED CMAKE_BUILD_TYPE)
+     file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/cmake/${CMAKE_BUILD_TYPE}")
+   else(DEFINED CMAKE_BUILD_TYPE)
+diff --git a/cmake/version.cmake b/cmake/version.cmake
+index de6d09f..4a7fb1a 100644
+--- a/cmake/version.cmake
++++ b/cmake/version.cmake
+@@ -198,7 +198,11 @@ macro(VERSION_COMPUTE)
+   set(PROJECT_STABLE False)
+ 
+   if("${PROJECT_SOURCE_DIR}" STREQUAL "")
+-    set(PROJECT_SOURCE_DIR "${PROJECT_JRL_CMAKE_MODULE_DIR}/..")
++    if(EXISTS "${PROJECT_JRL_CMAKE_MODULE_DIR}/../CMakeLists.txt")
++      set(PROJECT_SOURCE_DIR "${PROJECT_JRL_CMAKE_MODULE_DIR}/..")
++    else()
++      set(PROJECT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
++    endif()
+   endif()
+   if(NOT DEFINED PROJECT_VERSION_COMPUTATION_METHODS)
+     list(APPEND PROJECT_VERSION_COMPUTATION_METHODS "ROS_PACKAGE_XML_FILE"
+diff --git a/srcpy/my_bindings_headr.cpp b/srcpy/my_bindings_headr.cpp
+index 7f22e7b..8b64c1d 100644
+--- a/srcpy/my_bindings_headr.cpp
++++ b/srcpy/my_bindings_headr.cpp
+@@ -1,29 +1,29 @@
+ #include "my_bindings_headr.h"
+ 
+-using namespace boost::python;
++namespace bp = boost::python;
+ 
+ // Wrapper to access the adc property, an array of 2 floats (read-only access)) 
+-boost::python::tuple wrap_adc(MotorDriver const * motDriver) 
++bp::tuple wrap_adc(MotorDriver const * motDriver) 
+ {
+-  boost::python::list a;
++  bp::list a;
+   for (int i = 0; i < 2; ++i) 
+   {
+     a.append(motDriver->adc[i]);
+   }
+-  return boost::python::tuple(a);
++  return bp::tuple(a);
+ }
+ 
+ 
+     BOOST_PYTHON_MODULE(libmaster_board_sdk_pywrap)
+     {
+         // Bindings for LINK_manager_callback class
+-        class_<LINK_manager_callback, boost::noncopyable>("LINK_manager_callback", no_init)
+-            .def("callback", pure_virtual(&LINK_manager_callback::callback)) 
++        bp::class_<LINK_manager_callback, boost::noncopyable>("LINK_manager_callback", bp::no_init)
++            .def("callback", bp::pure_virtual(&LINK_manager_callback::callback)) 
+         ;
+         // End of bindings for LINK_manager_callback class
+ 
+         // Bindings for MasterBoardInterface class
+-        class_<MasterBoardInterface, bases<LINK_manager_callback> >("MasterBoardInterface", init<std::string, optional<bool> >())
++        bp::class_<MasterBoardInterface, bp::bases<LINK_manager_callback> >("MasterBoardInterface", bp::init<std::string, bp::optional<bool> >())
+             // Methods of MasterBoardInterface class
+             .def("Init", &MasterBoardInterface::Init)
+             .def("Stop", &MasterBoardInterface::Stop)
+@@ -38,15 +38,15 @@ boost::python::tuple wrap_adc(MotorDriver const * motDriver)
+             .def("PrintStats", &MasterBoardInterface::PrintStats)
+             .def("ResetTimeout", &MasterBoardInterface::ResetTimeout)
+             .def("IsTimeout", &MasterBoardInterface::IsTimeout)
+-            .def("GetDriver", make_function(&MasterBoardInterface::GetDriver, return_value_policy<boost::python::reference_existing_object>()))
+-            .def("GetMotor", make_function(&MasterBoardInterface::GetMotor, return_value_policy<boost::python::reference_existing_object>()))
+-            .def("imu_data_accelerometer", make_function(&MasterBoardInterface::imu_data_accelerometer))
+-            .def("imu_data_gyroscope", make_function(&MasterBoardInterface::imu_data_gyroscope))
+-            .def("imu_data_attitude", make_function(&MasterBoardInterface::imu_data_attitude))
+-            .def("imu_data_linear_acceleration", make_function(&MasterBoardInterface::imu_data_linear_acceleration))
+-            .def("powerboard_current", make_function(&MasterBoardInterface::powerboard_current))
+-            .def("powerboard_voltage", make_function(&MasterBoardInterface::powerboard_voltage))
+-            .def("powerboard_energy", make_function(&MasterBoardInterface::powerboard_energy))
++            .def("GetDriver", bp::make_function(&MasterBoardInterface::GetDriver, bp::return_value_policy<bp::reference_existing_object>()))
++            .def("GetMotor", bp::make_function(&MasterBoardInterface::GetMotor, bp::return_value_policy<bp::reference_existing_object>()))
++            .def("imu_data_accelerometer", bp::make_function(&MasterBoardInterface::imu_data_accelerometer))
++            .def("imu_data_gyroscope", bp::make_function(&MasterBoardInterface::imu_data_gyroscope))
++            .def("imu_data_attitude", bp::make_function(&MasterBoardInterface::imu_data_attitude))
++            .def("imu_data_linear_acceleration", bp::make_function(&MasterBoardInterface::imu_data_linear_acceleration))
++            .def("powerboard_current", bp::make_function(&MasterBoardInterface::powerboard_current))
++            .def("powerboard_voltage", bp::make_function(&MasterBoardInterface::powerboard_voltage))
++            .def("powerboard_energy", bp::make_function(&MasterBoardInterface::powerboard_energy))
+ 
+             .def("IsAckMsgReceived", &MasterBoardInterface::IsAckMsgReceived)
+             .def("SendInit", &MasterBoardInterface::SendInit)
+@@ -69,7 +69,7 @@ boost::python::tuple wrap_adc(MotorDriver const * motDriver)
+         // End of bindings for MasterBoardInterface class
+         
+         // Bindings for Motor class
+-        class_<Motor>("Motor", init<>())
++        bp::class_<Motor>("Motor", bp::init<>(("self")))
+             // Methods of Motor class
+             .def("SetCurrentReference", &Motor::SetCurrentReference)
+             .def("SetVelocityReference", &Motor::SetVelocityReference)
+@@ -108,13 +108,13 @@ boost::python::tuple wrap_adc(MotorDriver const * motDriver)
+             .add_property("enable_position_rollover_error", &Motor::get_enable_position_rollover_error, &Motor::set_enable_position_rollover_error)
+             .add_property("enable_index_toggle_bit", &Motor::get_enable_index_toggle_bit, &Motor::set_enable_index_toggle_bit)
+             .add_property("enable_index_offset_compensation", &Motor::get_enable_index_offset_compensation, &Motor::set_enable_index_offset_compensation)
+-            .add_property("driver", make_function(&Motor::get_driver, return_value_policy<boost::python::reference_existing_object>()), &Motor::set_driver)
++            .add_property("driver", bp::make_function(&Motor::get_driver, bp::return_value_policy<bp::reference_existing_object>()), &Motor::set_driver)
+         ;
+         // End of bindings for Motor class
+ 
+         
+         // Bindings for MotorDriver class
+-        class_<MotorDriver>("MotorDriver", init<>())
++        bp::class_<MotorDriver>("MotorDriver", bp::init<>(("self")))
+             // Methods of MotorDriver class
+             // .def("EnableMotorDriver", &MotorDriver::EnableMotorDriver) // Not defined in motor_driver.cpp but declared in motor_driver.h
+             // .def("DisableMotorDriver", &MotorDriver::DisableMotorDriver) // Not defined in motor_driver.cpp but declared in motor_driver.h
+@@ -130,8 +130,8 @@ boost::python::tuple wrap_adc(MotorDriver const * motDriver)
+             .def("Disable", &MotorDriver::Disable)
+             
+             // Public properties of MotorDriver class
+-            .add_property("motor1", make_function(&MotorDriver::get_motor1, return_value_policy<boost::python::reference_existing_object>()), &MotorDriver::set_motor1)
+-            .add_property("motor2", make_function(&MotorDriver::get_motor2, return_value_policy<boost::python::reference_existing_object>()), &MotorDriver::set_motor2)
++            .add_property("motor1", bp::make_function(&MotorDriver::get_motor1, bp::return_value_policy<bp::reference_existing_object>()), &MotorDriver::set_motor1)
++            .add_property("motor2", bp::make_function(&MotorDriver::get_motor2, bp::return_value_policy<bp::reference_existing_object>()), &MotorDriver::set_motor2)
+             .add_property("is_connected", &MotorDriver::get_is_connected, &MotorDriver::set_is_connected)
+             .add_property("is_enabled", &MotorDriver::get_is_enabled, &MotorDriver::set_is_enabled)
+             .add_property("error_code", &MotorDriver::get_error_code, &MotorDriver::set_error_code)
+diff --git a/tests/test_protocol.cpp b/tests/test_protocol.cpp
+index 71bae3d..25f097e 100644
+--- a/tests/test_protocol.cpp
++++ b/tests/test_protocol.cpp
+@@ -1,4 +1,14 @@
++#ifdef FOUND_CATCH2_MAJOR_VERSION
++#if (FOUND_CATCH2_MAJOR_VERSION == 2 )
++#include "catch2/catch.hpp"
++#elif (FOUND_CATCH2_MAJOR_VERSION == 3)
+ #include "catch2/catch_all.hpp"
++#else
++#error "FOUND_CATCH_MAJOR_VERSION not supported"
++#endif
++#endif
++
++
+ #include "master_board_sdk/protocol.h"
+ #include <limits>
+ 
+-- 
+2.43.0
+

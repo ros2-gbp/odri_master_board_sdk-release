@@ -1,0 +1,31 @@
+From c60dd99e2f491e1ce41dde23e57ae31d28a7ebd0 Mon Sep 17 00:00:00 2001
+From: Olivier Stasse <olivier.stasse@laas.fr>
+Date: Fri, 28 Jun 2024 22:37:34 +0200
+Subject: [PATCH 2/4] CHANGELOG.rst for v1.0.7
+
+---
+ CHANGELOG.rst | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index c469018..52703c8 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -2,6 +2,14 @@
+ Changelog for package odri_master_board_sdk
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
++1.0.7 (2024-06-24)
++------------------
++* Fix header to have the package working on Noble (@olivier-stasse)
++* Fix building Python bindings on Mac (@ManifoldFR)
++* Remove fetching Catch2 v3 and detect automatically the installed version. (@olivier-stasse)
++* Add Rolling github action (@olivier-stasse)
++
++
+ 1.0.6 (2023-11-15)
+ ------------------
+ * Makes cmake-format happy !
+-- 
+2.43.0
+

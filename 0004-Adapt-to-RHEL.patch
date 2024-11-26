@@ -1,0 +1,45 @@
+From 225ae59666cd9d25a93ce4124d77bf9e30c4dbd3 Mon Sep 17 00:00:00 2001
+From: Olivier Stasse <olivier.stasse@laas.fr>
+Date: Mon, 1 Jul 2024 05:03:41 +0200
+Subject: [PATCH 4/4] Adapt to RHEL
+
+---
+ CMakeLists.txt | 8 +++++---
+ package.xml    | 2 --
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1cc2b75..6edbc34 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -158,9 +158,11 @@ install(TARGETS master_board_example_imu_data_collection DESTINATION bin)
+ # --- UNIT TESTS -----------------------------------------------------------
+ if(BUILD_TESTING)
+   find_package(Catch2)
+-  add_definitions(-DFOUND_CATCH2_MAJOR_VERSION=${Catch2_VERSION_MAJOR})
+-  add_unit_test(test_protocol tests/test_protocol.cpp)
+-  target_link_libraries(test_protocol PRIVATE Catch2::Catch2WithMain)
++  if (Catch2_FOUND)
++    add_definitions(-DFOUND_CATCH2_MAJOR_VERSION=${Catch2_VERSION_MAJOR})
++    add_unit_test(test_protocol tests/test_protocol.cpp)
++    target_link_libraries(test_protocol PRIVATE Catch2::Catch2WithMain)
++  endif()
+ endif()
+ # Allows Colcon to find non-Ament packages when using workspace underlays
+ file(
+diff --git a/package.xml b/package.xml
+index 5e846ec..801f68f 100644
+--- a/package.xml
++++ b/package.xml
+@@ -17,8 +17,6 @@
+     <depend condition="$ROS_PYTHON_VERSION == 3">python3-numpy</depend>
+     <depend condition="$ROS_PYTHON_VERSION == 3">libboost-python-dev</depend>
+ 
+-    <test_depend>catch2</test_depend>
+-
+     <depend>git</depend>
+     <export>
+       <build_type>cmake</build_type>
+-- 
+2.43.0
+
