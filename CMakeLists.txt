@@ -87,7 +87,7 @@ set(${PROJECT_NAME}_HEADERS
 
 add_library(${ODRI_LIBRARY_NAME} SHARED ${${PROJECT_NAME}_SOURCES}
                                         ${${PROJECT_NAME}_HEADERS})
-target_link_libraries(${ODRI_LIBRARY_NAME} PUBLIC pthread)
+target_link_libraries(${ODRI_LIBRARY_NAME} pthread)
 target_include_directories(
   ${ODRI_LIBRARY_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -136,14 +136,12 @@ endif(BUILD_PYTHON_INTERFACE)
 # --- CHECK EXAMPLES -----------------------------------------------------------
 add_executable(master_board_example example/example.cpp)
 target_link_libraries(master_board_example PRIVATE ${ODRI_LIBRARY_NAME})
-
 set_target_properties(master_board_example
                       PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS master_board_example DESTINATION bin)
 
 add_executable(master_board_example_pd example/example_pd.cpp)
 target_link_libraries(master_board_example_pd PRIVATE ${ODRI_LIBRARY_NAME})
-
 set_target_properties(master_board_example_pd
                       PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS master_board_example_pd DESTINATION bin)
@@ -152,17 +150,14 @@ add_executable(master_board_example_imu_data_collection
                example/example_imu_data_collection.cpp)
 target_link_libraries(master_board_example_imu_data_collection
                       PRIVATE ${ODRI_LIBRARY_NAME})
-
 install(TARGETS master_board_example_imu_data_collection DESTINATION bin)
 
 # --- UNIT TESTS -----------------------------------------------------------
 if(BUILD_TESTING)
   find_package(Catch2)
-  if (Catch2_FOUND)
-    add_definitions(-DFOUND_CATCH2_MAJOR_VERSION=${Catch2_VERSION_MAJOR})
-    add_unit_test(test_protocol tests/test_protocol.cpp)
-    target_link_libraries(test_protocol PRIVATE Catch2::Catch2WithMain)
-  endif()
+  add_definitions(-DFOUND_CATCH2_MAJOR_VERSION=${Catch2_VERSION_MAJOR})
+  add_unit_test(test_protocol tests/test_protocol.cpp)
+  target_link_libraries(test_protocol PRIVATE Catch2::Catch2WithMain)
 endif()
 # Allows Colcon to find non-Ament packages when using workspace underlays
 file(
