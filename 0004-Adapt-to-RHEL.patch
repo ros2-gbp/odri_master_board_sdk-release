@@ -1,4 +1,4 @@
-From 225ae59666cd9d25a93ce4124d77bf9e30c4dbd3 Mon Sep 17 00:00:00 2001
+From 5830cc7a9165b148d873c9ea2c63982b1c2087ab Mon Sep 17 00:00:00 2001
 From: Olivier Stasse <olivier.stasse@laas.fr>
 Date: Mon, 1 Jul 2024 05:03:41 +0200
 Subject: [PATCH 4/4] Adapt to RHEL
@@ -9,10 +9,10 @@ Subject: [PATCH 4/4] Adapt to RHEL
  2 files changed, 5 insertions(+), 5 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 1cc2b75..6edbc34 100644
+index ce69774fc071..d8c3e986eb0c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -158,9 +158,11 @@ install(TARGETS master_board_example_imu_data_collection DESTINATION bin)
+@@ -155,9 +155,11 @@ install(TARGETS master_board_example_imu_data_collection DESTINATION bin)
  # --- UNIT TESTS -----------------------------------------------------------
  if(BUILD_TESTING)
    find_package(Catch2)
@@ -28,10 +28,10 @@ index 1cc2b75..6edbc34 100644
  # Allows Colcon to find non-Ament packages when using workspace underlays
  file(
 diff --git a/package.xml b/package.xml
-index 5e846ec..801f68f 100644
+index a17bb65b4407..edf3ffcdd2c0 100644
 --- a/package.xml
 +++ b/package.xml
-@@ -17,8 +17,6 @@
+@@ -18,8 +18,6 @@
      <depend condition="$ROS_PYTHON_VERSION == 3">python3-numpy</depend>
      <depend condition="$ROS_PYTHON_VERSION == 3">libboost-python-dev</depend>
  
@@ -41,5 +41,5 @@ index 5e846ec..801f68f 100644
      <export>
        <build_type>cmake</build_type>
 -- 
-2.43.0
+2.49.0
 

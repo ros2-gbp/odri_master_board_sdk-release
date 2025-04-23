@@ -1,0 +1,27 @@
+From ca89dac61a7787e3d95690647a372dec404a05be Mon Sep 17 00:00:00 2001
+From: Olivier Stasse <olivier.stasse@laas.fr>
+Date: Thu, 27 Jun 2024 22:25:01 +0200
+Subject: [PATCH 1/4] Update to version 1.0.7 cmake synchro Fix compilation pb
+ with stdexcept Fix binding pb with python Remove Catch2 fetching from test
+ directory.
+
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 42bec9117c03..ce69774fc071 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -87,7 +87,7 @@ set(${PROJECT_NAME}_HEADERS
+ 
+ add_library(${ODRI_LIBRARY_NAME} SHARED ${${PROJECT_NAME}_SOURCES}
+                                         ${${PROJECT_NAME}_HEADERS})
+-target_link_libraries(${ODRI_LIBRARY_NAME} pthread)
++target_link_libraries(${ODRI_LIBRARY_NAME} PUBLIC pthread)
+ target_include_directories(
+   ${ODRI_LIBRARY_NAME}
+   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+-- 
+2.49.0
+
