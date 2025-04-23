@@ -1,64 +1,101 @@
-# master-board
-Hardware and Firmware of the Solo Quadruped Master Board.
+# SDK
+The SDK provide a simple C++ class interface to send command to the masterboard via Ethernet or Wifi.
 
-This board centralises all the sensor and actuator data and provides wired and wireless connection to a realtime computer.
+## Prepare you interface
+You first need to identify you interface name. To get a list of the interface on your computer, run ```ifconfig```
 
-Connectivity:
+#### Ethernet 
+A direct connection should me made between the master board and you computer. It is not possible to use the same interface for local network and master board connection.
 
-* SPI: Address up to 8 SPI Slave: (max 80Mhz, DMA capable) compatible with BLMC µDriver SPI interface
-* Wifi: Wireless communication with a computer via raw ESP-NOW: round trip time of 1.2ms (including driver and OS latency) for a 127bytes message.
-* Ethernet: Wired communication with a computer via raw frames: round trip time of 0.2ms (including driver and OS latency) for a 127bytes message.
-* GPIO: 4GPIO free. Can be mapped to I2C, UART etc.. Two of them are curently used for IMU communication via UART
-* UART: Used to upgrade the ESP32 firmware, free on normal operation.
+###### Optional configuration:
+Some packet will be sent by the OS to the master board. Their are not usefull since the master board only use raw MAC frame.
+To disable ARP packet run:
+```
+sudo ifconfig MY_INTERFACE -arp
+``` 
+where MY_INTERFACE is your lan interface name.
 
-The board is programed via the ESP-IDF tool chain https://github.com/espressif/esp-idf
+To disable IPV6 trafic, add this line into ``` /etc/sysctl.conf``` 
+``` 
+net.ipv6.conf.MY_INTERFACE.disable_ipv6 = 1
+``` 
+where MY_INTERFACE is your lan interface name.
 
-Wireless closed loop control at 1kHz demo (click to see video):
-[![Alt text](https://img.youtube.com/vi/kEtmWzfE4aw/0.jpg)](https://www.youtube.com/watch?v=kEtmWzfE4aw)
+##### Optional configuration (macOS):
+To disable IPV6 and IPV4 you can use
+```
+networksetup -listnetworkserviceorder
+```
+to have the list of NetworkService (Hardware Port) related to the interface.
 
-IMU, ethernet closed loop cntrol at 1kHz demo (click to see video):
-[![Alt text](https://img.youtube.com/vi/TaonDmPJcGE/0.jpg)](https://www.youtube.com/watch?v=TaonDmPJcGE)
+It is then possible to switch off IPV6 with:
+```
+networksetup -setv6off NetworkService
+```
 
-## LED status
-**Red fade:** Waiting for init<br>
-**Magenta fade:** SPI Autodetect<br>
-**Blue fade:** waiting for first commmand<br>
-**Green fade:** Active control<br>
-**Yellow blink:** ethernet link down state awaiting for link up<br>
-**Red blink:** error state (communication with PC), awaiting for new init msg<br>
-**White blink:** state machine error (should never happen)<br>
+#### Wifi
+Your interface should support monitor mode and injection since the procol used by the master board is not a standard wifi.
+You need to configure your interface. A script is available in the sdk folder. to use it run 
+```
+sudo ./setup_wifi.sh MY_INTERFACE
+``` 
+where MY_INTERFACE your wlan interface name.
 
-Documentation
--------------
-Here are some helpful links to the documentation :
-
-[How to Flash the Master Board (install esp-idf and flash the firmware)](firmware/README.md)
-
-[SDK : How to Prepare Your Interface and Run the Example](sdk/master_board_sdk/README.md)
-
-[Master Board State Machine Description](documentation/masterboard_state_machine.md)
-
-[Description of the Communication Between the Master Board and the Computer](documentation/masterboard_communication.md)
-
-[Description of the BLMC µDriver SPI Interface](documentation/BLMC_%C2%B5Driver_SPI_interface.md)
-
-[Wiring the Master Board](documentation/masterboard_wiring.md)
-
-[Master Board Ordering and Preparation](documentation/masterboard_ordering_soldering.md)
-
-Authors
+How to run the C++ example
 --------
-Thomas Flayols  
-Etienne Arlaud
+main.cpp is a simple example to test the SDK, tested on ubuntu.
+It will execute a sinusoid trajectory on the first N_CONTROLLED_SLAVE 
+to compile it go into the sdk folder and run:
+```
+make
+```
+a bin folder is created.
+to run the example run:
+```
+sudo ./bin/exec MY_INTERFACE
+```
+where MY_INTERFACE is the name of the network interface used to connect to the master board.
 
-License
+How to run the Python examples
+--------
+
+* Clone the repository: `git clone --recursive https://github.com/open-dynamic-robot-initiative/master-board.git`
+
+* Get into the repository: `cd master-board`
+
+* Set the number of controlled drivers by opening `sdk/master_board_sdk/example/example.py` and tuning the `N_SLAVES_CONTROLED` constant: `N_SLAVES_CONTROLED 4` if you are using 4 driver boards (1 per leg)
+
+* Get in `sdk/master_board_sdk/`: `cd sdk/master_board_sdk/`
+
+* Create a build folder: `mkdir build`
+
+* Get into the folder: `cd build`
+
+* Two possibilities:
+    * Using `ccmake ..` turn on Python bindings by setting `BUILD_PYTHON_INTERFACE` to `ON` and `CMAKE_BUILD_TYPE` to `RELEASE`. Then compile and create the bindings: `cmake ..` then `make`
+    * Directly use `cmake -DBUILD_PYTHON_INTERFACE=ON -DCMAKE_BUILD_TYPE=RELEASE ..` then `make`. If you want to run the scripts with Python 3 then use `cmake -DBUILD_PYTHON_INTERFACE=ON -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=$(which python3) ..` instead.
+
+* Run the control script with the name of your Ethernet interface instead of `name_interface` (for instance `enp1s0`): 
+
+`sudo PYTHONPATH=. python example/example.pyc -i name_interface`
+
+* Run the listener script with the name of your Ethernet interface instead of `name_interface` (for instance `enp1s0`): 
+
+`sudo PYTHONPATH=. python example/listener.pyc -i name_interface`
+
+* Run the communication analyser script with the name of your Ethernet interface instead of `name_interface` (for instance `enp1s0`): 
+
+`sudo PYTHONPATH=. python example/com_analyser.pyc -i name_interface`
+
+
+How to run an executable based on the SDK without root permissions
 -------
-BSD 2-Clause License
 
-Copyright
------------
-Copyright (c) 2019, LAAS-CNRS, Max Planck Gesellschaft, New York University
-
-More Information
-----------------
-[Open Dynamic Robot Initiative](https://open-dynamic-robot-initiative.github.io)  
+To run an executable named EXECUTABLE_NAME without root permissions, run :
+```
+sudo setcap cap_net_admin,cap_net_raw+ep EXECUTABLE_NAME
+```
+remember to reset the capabilities on python if you use it other you can [get into trouble](https://answers.ros.org/question/366380/ubuntu1804ros2-dashing-failed-to-load-entry-point-issue/):
+```
+sudo setcap -r /usr/bin/python3.6
+```
