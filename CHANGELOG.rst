@@ -8,7 +8,7 @@ Changelog for package odri_master_board_sdk
 * Fix building Python bindings on Mac (@ManifoldFR)
 * Remove fetching Catch2 v3 and detect automatically the installed version. (@olivier-stasse)
 * Add Rolling github action (@olivier-stasse)
-
+  
 1.0.6 (2023-11-15)
 ------------------
 * Makes cmake-format happy !
